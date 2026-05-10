@@ -2,6 +2,8 @@
 
 > Read this file before making any changes to this project.
 
+**Repo:** https://github.com/UtkarshaKumar/pagesmith
+
 ## Project Summary
 
 **What it is:** A Mac app that lets non-technical users open any .html file, edit content/tables/styling visually (like a Word doc), and save it back — with surgical precision that preserves the rest of the file untouched. Serves as the default refinement engine for LLM-generated HTML.
