@@ -1,0 +1,28 @@
+{
+  "name": "pagesmith",
+  "version": "0.1.0",
+  "description": "PageSmith — Microsoft Word for HTML files. Edit HTML visually, save back cleanly.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UtkarshaKumar/pagesmith.git"
+  },
+  "author": "Utkarsh Kumar",
+  "license": "MIT",
+  "homepage": "https://github.com/UtkarshaKumar/pagesmith#readme",
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.1",
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PageSmith</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Empty state -->
+    <div id="empty-state">
+      <div class="empty-state-content">
+        <h1>Open an HTML file to start editing</h1>
+        <button id="open-btn" class="primary-btn">Open...</button>
+      </div>
+      <div class="recent-files">
+        <p class="recent-label">Recently opened files will appear here</p>
+        <div id="recent-list"></div>
+      </div>
+    </div>
+
+    <!-- Editor view (hidden initially) -->
+    <div id="editor-view" class="hidden">
+      <!-- Visual/Source toggle -->
+      <div class="mode-toggle">
+        <button id="visual-mode-btn" class="mode-btn active">Visual</button>
+        <button id="source-mode-btn" class="mode-btn">Source</button>
+      </div>
+
+      <!-- Toolbar -->
+      <div id="toolbar">
+        <!-- Paragraph format -->
+        <select id="format-select" class="toolbar-item">
+          <option value="p">Paragraph</option>
+          <option value="h1">Heading 1</option>
+          <option value="h2">Heading 2</option>
+          <option value="h3">Heading 3</option>
+          <option value="h4">Heading 4</option>
+          <option value="h5">Heading 5</option>
+          <option value="h6">Heading 6</option>
+          <option value="blockquote">Blockquote</option>
+          <option value="pre">Preformatted</option>
+          <option value="article">Article</option>
+          <option value="section">Section</option>
+          <option value="nav">Nav</option>
+          <option value="header">Header</option>
+          <option value="footer">Footer</option>
+          <option value="aside">Aside</option>
+          <option value="figure">Figure</option>
+          <option value="main">Main</option>
+        </select>
+
+        <!-- Font -->
+        <select id="font-select" class="toolbar-item">
+          <option value="">Font</option>
+          <option value="-apple-system">System</option>
+          <option value="Arial">Arial</option>
+          <option value="Helvetica">Helvetica</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Courier New">Courier New</option>
+          <option value="Verdana">Verdana</option>
+          <option value="Trebuchet MS">Trebuchet MS</option>
+        </select>
+
+        <!-- Font size -->
+        <select id="font-size-select" class="toolbar-item">
+          <option value="">Size</option>
+          <option value="1">8pt</option>
+          <option value="2">10pt</option>
+          <option value="3">12pt</option>
+          <option value="4">14pt</option>
+          <option value="5">18pt</option>
+          <option value="6">24pt</option>
+          <option value="7">36pt</option>
+        </select>
+
+        <div class="toolbar-separator"></div>
+
+        <!-- Text formatting -->
+        <button id="bold-btn" class="toolbar-btn" title="Bold (⌘B)">B</button>
+        <button id="italic-btn" class="toolbar-btn italic" title="Italic (⌘I)">I</button>
+        <button id="underline-btn" class="toolbar-btn underline" title="Underline (⌘U)">U</button>
+        <button id="strike-btn" class="toolbar-btn strikethrough" title="Strikethrough">S</button>
+
+        <div class="toolbar-separator"></div>
+
+        <!-- Lists -->
+        <button id="ul-btn" class="toolbar-btn" title="Bullet List">•</button>
+        <button id="ol-btn" class="toolbar-btn" title="Numbered List">1.</button>
+
+        <div class="toolbar-separator"></div>
+
+        <!-- Alignment -->
+        <button id="align-left-btn" class="toolbar-btn active" title="Align Left">⫷</button>
+        <button id="align-center-btn" class="toolbar-btn" title="Align Center">≣</button>
+        <button id="align-right-btn" class="toolbar-btn" title="Align Right">⫸</button>
+
+        <div class="toolbar-separator"></div>
+
+        <!-- Link & Image -->
+        <button id="link-btn" class="toolbar-btn" title="Insert Link (⌘K)">🔗</button>
+        <button id="image-btn" class="toolbar-btn" title="Insert Image">🖼</button>
+      </div>
+
+      <!-- Visual editing area -->
+      <div id="visual-editor" class="editor-area" contenteditable="true">
+        <!-- Content rendered here -->
+      </div>
+
+      <!-- Source editing area (hidden by default) -->
+      <div id="source-editor" class="editor-area hidden">
+        <textarea id="source-textarea" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
