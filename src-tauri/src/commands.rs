@@ -171,9 +171,33 @@ pub fn parse_source_map(state: State<AppState>) -> Result<usize, String> {
     let map = parser::parse_html(&model.raw);
     let count = map.node_count();
 
-    // Note: we don't replace the source map here because
-    // the LosslessSink approach needs refinement for production use.
-    // For now, just return the count.
-
     Ok(count)
+}
+
+#[tauri::command]
+pub fn get_file_info(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let model = state.model.lock().unwrap();
+    match model.as_ref() {
+        Some(m) => Ok(serde_json::json!({
+            "path": m.file_path,
+            "is_dirty": m.is_dirty,
+            "length": m.len(),
+            "encoding": m.encoding,
+        })),
+        None => Ok(serde_json::json!({
+            "path": null,
+            "is_dirty": false,
+            "length": 0,
+            "encoding": "utf-8",
+        })),
+    }
+}
+
+#[tauri::command]
+pub fn set_source_content(state: State<AppState>, content: String) -> Result<(), String> {
+    let mut model = state.model.lock().unwrap();
+    let model = model.as_mut().ok_or("No file open")?;
+    model.raw = content.into_bytes();
+    model.is_dirty = true;
+    Ok(())
 }

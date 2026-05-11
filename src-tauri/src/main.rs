@@ -26,6 +26,8 @@ fn main() {
             commands::get_source_length,
             commands::read_range,
             commands::parse_source_map,
+            commands::get_file_info,
+            commands::set_source_content,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PageSmith");

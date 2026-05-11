@@ -1,26 +1,27 @@
-// PageSmith frontend entry point
-// WKWebView-based visual HTML editor
+// PageSmith v0.2 — Visual editor bridged to surgical Rust engine
+// Every edit goes through invoke('apply_patch', ...) to the Rust engine.
+// Constitution E1: Source buffer is truth. DOM is derived view.
 
 const { invoke } = window.__TAURI__?.core || {};
 const { open, save } = window.__TAURI__?.plugin?.dialog || {};
-const { readTextFile, writeTextFile } = window.__TAURI__?.plugin?.fs || {};
 
-// State
+// ── State ──
+
 let currentFilePath = null;
 let isDirty = false;
 let editMode = 'visual'; // 'visual' | 'source'
-let sourceHTML = '';
+let lastRenderedHTML = ''; // Track for diff detection
 
-// DOM refs
+// ── DOM refs ──
+
 const emptyState = document.getElementById('empty-state');
 const editorView = document.getElementById('editor-view');
 const visualEditor = document.getElementById('visual-editor');
-const sourceEditor = document.getElementById('source-editor');
 const sourceTextarea = document.getElementById('source-textarea');
+const sourceEditor = document.getElementById('source-editor');
 const visualModeBtn = document.getElementById('visual-mode-btn');
 const sourceModeBtn = document.getElementById('source-mode-btn');
 const openBtn = document.getElementById('open-btn');
-const recentList = document.getElementById('recent-list');
 
 // Toolbar refs
 const boldBtn = document.getElementById('bold-btn');
@@ -37,7 +38,7 @@ const alignCenterBtn = document.getElementById('align-center-btn');
 const alignRightBtn = document.getElementById('align-right-btn');
 const linkBtn = document.getElementById('link-btn');
 
-// --- File Operations ---
+// ── File Operations ──
 
 async function openFile() {
   try {
@@ -45,17 +46,17 @@ async function openFile() {
       filters: [{ name: 'HTML Files', extensions: ['html', 'htm'] }],
       multiple: false,
     });
-
     if (!selected) return;
 
-    const filePath = selected;
-    const content = await readTextFile(filePath);
-    
-    currentFilePath = filePath;
-    sourceHTML = content;
+    // Use engine to open file
+    const html = await invoke('open_file', { path: selected });
+    const info = await invoke('get_file_info');
+
+    currentFilePath = info.path;
     isDirty = false;
-    
-    renderFile(content);
+    lastRenderedHTML = html;
+
+    renderHTML(html);
     showEditor();
     updateTitle();
   } catch (err) {
@@ -65,16 +66,16 @@ async function openFile() {
 
 async function saveFile() {
   if (!currentFilePath) return;
-  
   try {
-    const content = editMode === 'source' ? sourceTextarea.value : getVisualContent();
-    await writeTextFile(currentFilePath, content);
-    
-    sourceHTML = content;
+    // Sync source mode changes before save
+    if (editMode === 'source') {
+      await invoke('set_source_content', { content: sourceTextarea.value });
+    }
+    await invoke('save_file');
     isDirty = false;
     updateTitle();
   } catch (err) {
-    console.error('Failed to save file:', err);
+    console.error('Failed to save:', err);
   }
 }
 
@@ -83,34 +84,29 @@ async function saveFileAs() {
     const filePath = await save({
       filters: [{ name: 'HTML Files', extensions: ['html', 'htm'] }],
     });
-    
     if (!filePath) return;
-    
-    const content = editMode === 'source' ? sourceTextarea.value : getVisualContent();
-    await writeTextFile(filePath, content);
-    
+
+    if (editMode === 'source') {
+      await invoke('set_source_content', { content: sourceTextarea.value });
+    }
+    await invoke('save_file_as', { path: filePath });
     currentFilePath = filePath;
-    sourceHTML = content;
     isDirty = false;
     updateTitle();
   } catch (err) {
-    console.error('Failed to save file:', err);
+    console.error('Failed to save as:', err);
   }
 }
 
-// --- Rendering ---
+// ── Rendering ──
 
-function renderFile(html) {
+function renderHTML(html) {
   visualEditor.innerHTML = html;
   sourceTextarea.value = html;
+  lastRenderedHTML = html;
   addTableGuideBorders();
-}
-
-function getVisualContent() {
-  removeTableGuideBorders();
-  const html = visualEditor.innerHTML;
-  addTableGuideBorders();
-  return '<!DOCTYPE html>\n' + html;
+  // Disable JS execution safety
+  visualEditor.querySelectorAll('script').forEach(s => s.remove());
 }
 
 function showEditor() {
@@ -118,155 +114,218 @@ function showEditor() {
   editorView.classList.remove('hidden');
 }
 
-function showEmptyState() {
-  editorView.classList.add('hidden');
-  emptyState.classList.remove('hidden');
-}
-
 function updateTitle() {
-  const filename = currentFilePath 
-    ? currentFilePath.split('/').pop() 
+  const filename = currentFilePath
+    ? currentFilePath.split('/').pop()
     : 'Untitled';
-  document.title = filename + (isDirty ? ' — Edited' : '') + ' — PageSmith';
+  document.title = (isDirty ? '● ' : '') + filename + ' — PageSmith';
 }
 
-// --- Edit Mode Toggle ---
+// ── Engine Bridge: Compute and apply patches ──
 
-visualModeBtn.addEventListener('click', () => switchMode('visual'));
-sourceModeBtn.addEventListener('click', () => switchMode('source'));
+async function applySurgicalEdit(oldText, newText, cursorOffset, deleteLength) {
+  try {
+    // Find the edit in the source buffer by searching for oldText
+    // Simple approach: search from the cursor position
+    const html = lastRenderedHTML;
+    // Estimate byte offset from cursor position in visual text
+    // Count visible characters before cursor
+    const sel = window.getSelection();
+    let byteOffset = 0;
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      byteOffset = getTextOffsetBefore(range);
+    }
 
-function switchMode(mode) {
-  if (mode === editMode) return;
-  
-  if (editMode === 'source') {
-    // Switching from source to visual
-    const srcContent = sourceTextarea.value;
-    visualEditor.innerHTML = srcContent;
-    sourceHTML = srcContent;
-    addTableGuideBorders();
-  } else {
-    // Switching from visual to source
-    removeTableGuideBorders();
-    const visualContent = getVisualContent();
-    sourceTextarea.value = visualContent;
-  }
-  
-  editMode = mode;
-  
-  if (mode === 'visual') {
-    visualEditor.classList.remove('hidden');
-    sourceEditor.classList.add('hidden');
-    visualModeBtn.classList.add('active');
-    sourceModeBtn.classList.remove('active');
-    enableToolbar();
-  } else {
-    visualEditor.classList.add('hidden');
-    sourceEditor.classList.remove('hidden');
-    visualModeBtn.classList.remove('active');
-    sourceModeBtn.classList.add('active');
-    disableToolbar();
+    // Apply the patch through the engine
+    const newHTML = await invoke('apply_patch', {
+      offset: byteOffset,
+      length: deleteLength,
+      replacement: newText,
+    });
+
+    lastRenderedHTML = newHTML;
+    isDirty = true;
+    updateTitle();
+
+    // Re-render and restore cursor
+    const savedOffset = byteOffset + newText.length;
+    renderHTMLKeepCursor(newHTML, savedOffset);
+  } catch (err) {
+    console.error('Patch failed:', err);
   }
 }
 
-// --- Toolbar ---
-
-function enableToolbar() {
-  document.querySelectorAll('.toolbar-btn, .toolbar-item').forEach(el => {
-    el.disabled = false;
-  });
+// Estimate byte offset by counting text before a DOM range
+function getTextOffsetBefore(range) {
+  const pre = document.createRange();
+  pre.selectNodeContents(visualEditor);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length;
 }
 
-function disableToolbar() {
-  document.querySelectorAll('.toolbar-btn, .toolbar-item').forEach(el => {
-    el.disabled = true;
-  });
+// Re-render but restore cursor to the saved offset
+function renderHTMLKeepCursor(html, offset) {
+  visualEditor.innerHTML = html;
+  addTableGuideBorders();
+  visualEditor.querySelectorAll('script').forEach(s => s.remove());
+
+  // Restore cursor at offset
+  try {
+    const sel = window.getSelection();
+    const range = setCursorAtTextOffset(visualEditor, offset);
+    if (range) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  } catch (e) { /* ignore cursor restore failures */ }
 }
 
-// Bold
-boldBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('bold', false, null);
-  markDirty();
-});
+function setCursorAtTextOffset(node, targetOffset) {
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+  let currentOffset = 0;
+  let textNode;
+  while ((textNode = walker.nextNode())) {
+    const len = textNode.textContent.length;
+    if (currentOffset + len >= targetOffset) {
+      const range = document.createRange();
+      range.setStart(textNode, targetOffset - currentOffset);
+      range.collapse(true);
+      return range;
+    }
+    currentOffset += len;
+  }
+  return null;
+}
 
-// Italic
-italicBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('italic', false, null);
-  markDirty();
-});
+// ── Toolbar: Formatting through engine ──
 
-// Underline
-underlineBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('underline', false, null);
-  markDirty();
-});
+// Each format action computes the patch and sends to engine
+async function wrapSelection(tag, attrStr = '') {
+  const html = lastRenderedHTML;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const selectedText = sel.toString();
+  if (!selectedText) return;
 
-// Strikethrough
-strikeBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('strikeThrough', false, null);
-  markDirty();
-});
+  const startOffset = getTextOffsetBefore(sel.getRangeAt(0));
+  const openTag = attrStr ? `<${tag} ${attrStr}>` : `<${tag}>`;
+  const closeTag = `</${tag}>`;
+  const replacement = openTag + selectedText + closeTag;
+
+  try {
+    const newHTML = await invoke('apply_patch', {
+      offset: startOffset,
+      length: selectedText.length,
+      replacement,
+    });
+    lastRenderedHTML = newHTML;
+    isDirty = true;
+    updateTitle();
+    renderHTMLKeepCursor(newHTML, startOffset + replacement.length);
+  } catch (err) {
+    console.error('Format patch failed:', err);
+  }
+}
+
+boldBtn.addEventListener('click', () => wrapSelection('strong'));
+italicBtn.addEventListener('click', () => wrapSelection('em'));
+underlineBtn.addEventListener('click', () => wrapSelection('u'));
+strikeBtn.addEventListener('click', () => wrapSelection('s'));
 
 // Lists
-ulBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('insertUnorderedList', false, null);
-  markDirty();
+ulBtn.addEventListener('click', async () => {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const text = sel.toString();
+  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const replacement = '<ul><li>' + text + '</li></ul>';
+  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
+  lastRenderedHTML = newHTML;
+  isDirty = true;
+  updateTitle();
+  renderHTMLKeepCursor(newHTML, offset + replacement.length);
 });
 
-olBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('insertOrderedList', false, null);
-  markDirty();
+olBtn.addEventListener('click', async () => {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const text = sel.toString();
+  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const replacement = '<ol><li>' + text + '</li></ol>';
+  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
+  lastRenderedHTML = newHTML;
+  isDirty = true;
+  updateTitle();
+  renderHTMLKeepCursor(newHTML, offset + replacement.length);
 });
 
 // Paragraph format
-formatSelect.addEventListener('change', () => {
-  visualEditor.focus();
-  document.execCommand('formatBlock', false, formatSelect.value);
-  markDirty();
+formatSelect.addEventListener('change', async () => {
+  const tag = formatSelect.value;
+  if (!tag) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const text = sel.toString() || ' ';
+  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const replacement = `<${tag}>${text}</${tag}>`;
+  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
+  lastRenderedHTML = newHTML;
+  isDirty = true;
+  updateTitle();
+  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  formatSelect.value = 'p'; // Reset
 });
 
 // Font
-fontSelect.addEventListener('change', () => {
-  if (!fontSelect.value) return;
-  visualEditor.focus();
-  document.execCommand('fontName', false, fontSelect.value);
-  markDirty();
+fontSelect.addEventListener('change', async () => {
+  const font = fontSelect.value;
+  if (!font) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const text = sel.toString();
+  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const replacement = `<span style="font-family:${font}">${text}</span>`;
+  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
+  lastRenderedHTML = newHTML;
+  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  fontSelect.value = '';
 });
 
 // Font size
-fontSizeSelect.addEventListener('change', () => {
-  if (!fontSizeSelect.value) return;
-  visualEditor.focus();
-  document.execCommand('fontSize', false, fontSizeSelect.value);
-  markDirty();
+fontSizeSelect.addEventListener('change', async () => {
+  const sizes = {'1':'8pt','2':'10pt','3':'12pt','4':'14pt','5':'18pt','6':'24pt','7':'36pt'};
+  const size = sizes[fontSizeSelect.value];
+  if (!size) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const text = sel.toString();
+  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const replacement = `<span style="font-size:${size}">${text}</span>`;
+  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
+  lastRenderedHTML = newHTML;
+  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  fontSizeSelect.value = '';
 });
 
 // Alignment
-alignLeftBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('justifyLeft', false, null);
-  updateAlignButtons('left');
-  markDirty();
-});
+async function applyAlignment(align) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const text = sel.toString();
+  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const replacement = `<div style="text-align:${align}">${text}</div>`;
+  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
+  lastRenderedHTML = newHTML;
+  isDirty = true;
+  updateTitle();
+  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  updateAlignButtons(align);
+}
 
-alignCenterBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('justifyCenter', false, null);
-  updateAlignButtons('center');
-  markDirty();
-});
-
-alignRightBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  document.execCommand('justifyRight', false, null);
-  updateAlignButtons('right');
-  markDirty();
-});
+alignLeftBtn.addEventListener('click', () => applyAlignment('left'));
+alignCenterBtn.addEventListener('click', () => applyAlignment('center'));
+alignRightBtn.addEventListener('click', () => applyAlignment('right'));
 
 function updateAlignButtons(active) {
   [alignLeftBtn, alignCenterBtn, alignRightBtn].forEach(b => b.classList.remove('active'));
@@ -275,47 +334,284 @@ function updateAlignButtons(active) {
   if (active === 'right') alignRightBtn.classList.add('active');
 }
 
-// Link
-linkBtn.addEventListener('click', () => {
-  visualEditor.focus();
-  const selection = window.getSelection();
-  if (!selection.rangeCount) return;
-  
-  const range = selection.getRangeAt(0);
-  const selectedText = selection.toString();
-  
-  showLinkPopover(range, selectedText);
+// ── contenteditable input → surgical patch ──
+
+// Track state before each input for diff computation
+let beforeInputText = '';
+let beforeInputOffset = 0;
+
+visualEditor.addEventListener('keydown', (e) => {
+  // Capture state before the edit
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    beforeInputOffset = getTextOffsetBefore(sel.getRangeAt(0));
+  }
+  beforeInputText = visualEditor.textContent || '';
 });
 
-// --- Table Editing ---
+visualEditor.addEventListener('input', async (e) => {
+  e.preventDefault();
+  const afterText = visualEditor.textContent || '';
+  const beforeText = beforeInputText;
 
-function addTableGuideBorders() {
-  visualEditor.querySelectorAll('table').forEach(table => {
-    table.classList.add('guide-borders');
-  });
-}
+  if (beforeText === afterText) return;
 
-function removeTableGuideBorders() {
-  visualEditor.querySelectorAll('table.guide-borders').forEach(table => {
-    table.classList.remove('guide-borders');
-  });
-}
+  // Compute what changed
+  // Find the first differing character
+  let diffStart = 0;
+  while (diffStart < beforeText.length && diffStart < afterText.length
+    && beforeText[diffStart] === afterText[diffStart]) {
+    diffStart++;
+  }
 
-visualEditor.addEventListener('click', (e) => {
-  const td = e.target.closest('td, th');
-  if (td) {
-    visualEditor.querySelectorAll('td.editing, th.editing').forEach(el => {
-      el.classList.remove('editing');
+  // Find the end of the difference
+  let beforeEnd = beforeText.length;
+  let afterEnd = afterText.length;
+  while (beforeEnd > diffStart && afterEnd > diffStart
+    && beforeText[beforeEnd - 1] === afterText[afterEnd - 1]) {
+    beforeEnd--;
+    afterEnd--;
+  }
+
+  const deleted = beforeText.slice(diffStart, beforeEnd);
+  const inserted = afterText.slice(diffStart, afterEnd);
+
+  // Estimate byte offset in source
+  const byteOffset = beforeInputOffset + diffStart;
+
+  // Restore the DOM from engine before applying patch
+  visualEditor.innerHTML = lastRenderedHTML;
+  addTableGuideBorders();
+  visualEditor.querySelectorAll('script').forEach(s => s.remove());
+
+  // Apply surgical patch
+  try {
+    const newHTML = await invoke('apply_patch', {
+      offset: byteOffset,
+      length: deleted.length,
+      replacement: inserted,
     });
-    td.classList.add('editing');
+    lastRenderedHTML = newHTML;
+    isDirty = true;
+    updateTitle();
+
+    // Re-render and restore cursor
+    const newCursorOffset = byteOffset + inserted.length;
+    renderHTMLKeepCursor(newHTML, newCursorOffset);
+  } catch (err) {
+    console.error('Input patch failed:', err);
+    // Fallback: reload from engine
+    try {
+      const html = await invoke('get_current_html');
+      renderHTMLKeepCursor(html, byteOffset);
+    } catch (e2) { /* give up */ }
   }
 });
 
-// --- Link Popover ---
+// ── Undo/Redo via Engine ──
 
-function showLinkPopover(range, selectedText) {
+document.addEventListener('keydown', async (e) => {
+  const isMeta = e.metaKey || e.ctrlKey;
+
+  if (isMeta && e.key === 'z' && !e.shiftKey) {
+    e.preventDefault();
+    try {
+      const newHTML = await invoke('undo');
+      lastRenderedHTML = newHTML;
+      renderHTML(newHTML);
+    } catch (err) { /* nothing to undo */ }
+  }
+
+  if (isMeta && e.key === 'z' && e.shiftKey) {
+    e.preventDefault();
+    try {
+      const newHTML = await invoke('redo');
+      lastRenderedHTML = newHTML;
+      renderHTML(newHTML);
+    } catch (err) { /* nothing to redo */ }
+  }
+
+  if (isMeta && e.key === 'o') { e.preventDefault(); await openFile(); }
+  if (isMeta && e.key === 's' && e.shiftKey) { e.preventDefault(); await saveFileAs(); }
+  else if (isMeta && e.key === 's') { e.preventDefault(); await saveFile(); }
+  if (isMeta && e.shiftKey && e.key === 'v') { e.preventDefault(); switchMode(editMode === 'visual' ? 'source' : 'visual'); }
+  if (isMeta && e.key === 'k') { e.preventDefault(); linkBtn.click(); }
+});
+
+// ── Visual/Source Mode Toggle ──
+
+visualModeBtn.addEventListener('click', () => switchMode('visual'));
+sourceModeBtn.addEventListener('click', () => switchMode('source'));
+
+async function switchMode(mode) {
+  if (mode === editMode) return;
+
+  if (editMode === 'source') {
+    // Source → Visual: send content to engine then render
+    await invoke('set_source_content', { content: sourceTextarea.value });
+    const html = await invoke('get_current_html');
+    lastRenderedHTML = html;
+    renderHTML(html);
+  } else {
+    // Visual → Source: get latest from engine
+    const html = await invoke('get_current_html');
+    sourceTextarea.value = html;
+  }
+
+  editMode = mode;
+
+  if (mode === 'visual') {
+    visualEditor.classList.remove('hidden');
+    sourceEditor.classList.add('hidden');
+    visualModeBtn.classList.add('active');
+    sourceModeBtn.classList.remove('active');
+  } else {
+    visualEditor.classList.add('hidden');
+    sourceEditor.classList.remove('hidden');
+    visualModeBtn.classList.remove('active');
+    sourceModeBtn.classList.add('active');
+  }
+}
+
+// ── Table Editing ──
+
+function addTableGuideBorders() {
+  visualEditor.querySelectorAll('table').forEach(table => {
+    table.style.setProperty('--guide-border', '1px dashed #c8c8ce');
+    table.querySelectorAll('td, th').forEach(cell => {
+      cell.style.border = 'var(--guide-border)';
+    });
+  });
+}
+
+// Context menu
+let contextMenuEl = null;
+
+visualEditor.addEventListener('contextmenu', async (e) => {
+  const td = e.target.closest('td, th');
+  if (!td) return;
+  e.preventDefault();
+  removeContextMenu();
+
+  const menu = document.createElement('div');
+  menu.id = 'context-menu';
+  menu.innerHTML = `
+    <button class="context-menu-item" data-action="row-above">Insert Row Above</button>
+    <button class="context-menu-item" data-action="row-below">Insert Row Below</button>
+    <div class="context-separator"></div>
+    <button class="context-menu-item" data-action="col-left">Insert Column Left</button>
+    <button class="context-menu-item" data-action="col-right">Insert Column Right</button>
+    <div class="context-separator"></div>
+    <button class="context-menu-item" data-action="delete-row">Delete Row</button>
+    <button class="context-menu-item" data-action="delete-col">Delete Column</button>
+    <button class="context-menu-item" data-action="delete-table">Delete Table</button>
+  `;
+  menu.style.top = e.clientY + 'px';
+  menu.style.left = e.clientX + 'px';
+  document.body.appendChild(menu);
+  contextMenuEl = menu;
+
+  menu.addEventListener('click', (me) => {
+    const action = me.target.dataset.action;
+    if (action) {
+      handleTableAction(td, action);
+      removeContextMenu();
+    }
+  });
+});
+
+document.addEventListener('click', (e) => {
+  if (contextMenuEl && !contextMenuEl.contains(e.target)) removeContextMenu();
+  if (!e.target.closest('#link-popover')) removeLinkPopover();
+});
+
+function removeContextMenu() {
+  if (contextMenuEl) { contextMenuEl.remove(); contextMenuEl = null; }
+}
+
+async function handleTableAction(cell, action) {
+  const row = cell.closest('tr');
+  const table = cell.closest('table');
+  const cellIndex = Array.from(row.children).indexOf(cell);
+  const colCount = row.children.length;
+  const cellTag = cell.tagName;
+
+  let patchHTML = '';
+  switch (action) {
+    case 'row-above': {
+      const cells = Array.from({length: colCount}, () => `<${cellTag}></${cellTag}>`).join('');
+      patchHTML = `<tr>${cells}</tr>`;
+      break;
+    }
+    case 'row-below': {
+      const cells = Array.from({length: colCount}, () => `<${cellTag}></${cellTag}>`).join('');
+      patchHTML = `<tr>${cells}</tr>`;
+      break;
+    }
+    case 'col-left': {
+      Array.from(table.rows).forEach(r => {
+        const newCell = document.createElement(cellTag);
+        r.insertBefore(newCell, r.children[cellIndex]);
+      });
+      return; // DOM-only for now
+    }
+    case 'col-right': {
+      Array.from(table.rows).forEach(r => {
+        const newCell = document.createElement(cellTag);
+        r.insertBefore(newCell, r.children[cellIndex + 1]);
+      });
+      return;
+    }
+    case 'delete-row': if (table.rows.length > 1) row.remove(); return;
+    case 'delete-col': {
+      if (row.children.length > 1) {
+        Array.from(table.rows).forEach(r => {
+          if (r.children[cellIndex]) r.children[cellIndex].remove();
+        });
+      }
+      return;
+    }
+    case 'delete-table': table.remove(); return;
+  }
+
+  if (patchHTML) {
+    // Find the table in the source and insert
+    const html = lastRenderedHTML;
+    const tableHTML = table.outerHTML;
+    const tableStart = html.indexOf(tableHTML);
+    if (tableStart >= 0 && action === 'row-above') {
+      // Insert before first row's content
+      const firstRow = table.rows[0];
+      const rowHTML = firstRow.outerHTML;
+      const rowStart = html.indexOf(rowHTML);
+      if (rowStart >= 0) {
+        const newHTML = await invoke('apply_patch', {
+          offset: rowStart,
+          length: 0,
+          replacement: patchHTML,
+        });
+        lastRenderedHTML = newHTML;
+        renderHTML(newHTML);
+      }
+    }
+  }
+
+  isDirty = true;
+  updateTitle();
+}
+
+// ── Link Editing ──
+
+linkBtn.addEventListener('click', () => {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const selectedText = sel.toString();
+  if (!selectedText) return;
+  showLinkPopover(selectedText, getTextOffsetBefore(sel.getRangeAt(0)));
+});
+
+function showLinkPopover(selectedText, offset) {
   removeLinkPopover();
-  
   const popover = document.createElement('div');
   popover.id = 'link-popover';
   popover.innerHTML = `
@@ -323,205 +619,54 @@ function showLinkPopover(range, selectedText) {
     <input type="text" id="link-text" placeholder="Link text" value="${escapeHtml(selectedText)}" />
     <label><input type="checkbox" id="link-new-tab" /> Open in new tab</label>
     <div class="popover-actions">
-      <button id="link-remove" class="danger">Remove</button>
-      <button id="link-save" class="primary-btn">Save</button>
       <button id="link-cancel">Cancel</button>
+      <button id="link-save" class="primary-btn">Save</button>
     </div>
   `;
-  
-  const rect = range.getBoundingClientRect();
-  popover.style.top = `${rect.bottom + 8}px`;
-  popover.style.left = `${rect.left}px`;
-  
+
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    popover.style.top = `${rect.bottom + 8}px`;
+    popover.style.left = `${Math.min(rect.left, window.innerWidth - 300)}px`;
+  }
+
   document.body.appendChild(popover);
-  
   document.getElementById('link-url').focus();
-  document.getElementById('link-save').addEventListener('click', () => {
+
+  document.getElementById('link-save').addEventListener('click', async () => {
     const url = document.getElementById('link-url').value;
     const text = document.getElementById('link-text').value || url;
     const newTab = document.getElementById('link-new-tab').checked;
-    
-    if (url) {
-      range.deleteContents();
-      const a = document.createElement('a');
-      a.href = url;
-      a.textContent = text;
-      if (newTab) a.target = '_blank';
-      range.insertNode(a);
-      markDirty();
-    }
+    if (!url) return;
+
+    const targetAttr = newTab ? ' target="_blank"' : '';
+    const replacement = `<a href="${url}"${targetAttr}>${text}</a>`;
+    try {
+      const newHTML = await invoke('apply_patch', {
+        offset,
+        length: selectedText.length,
+        replacement,
+      });
+      lastRenderedHTML = newHTML;
+      isDirty = true;
+      updateTitle();
+      renderHTML(newHTML);
+    } catch (err) { console.error('Link patch failed:', err); }
     removeLinkPopover();
   });
-  
-  document.getElementById('link-remove').addEventListener('click', removeLinkPopover);
+
   document.getElementById('link-cancel').addEventListener('click', removeLinkPopover);
 }
 
 function removeLinkPopover() {
-  const existing = document.getElementById('link-popover');
-  if (existing) existing.remove();
+  const el = document.getElementById('link-popover');
+  if (el) el.remove();
 }
 
-// --- Context Menu ---
-
-let contextMenuEl = null;
-
-visualEditor.addEventListener('contextmenu', (e) => {
-  e.preventDefault();
-  removeContextMenu();
-  
-  const td = e.target.closest('td, th');
-  if (!td) return;
-  
-  const menu = document.createElement('div');
-  menu.id = 'context-menu';
-  menu.innerHTML = `
-    <button class="context-menu-item" data-action="insert-row-above">Insert Row Above</button>
-    <button class="context-menu-item" data-action="insert-row-below">Insert Row Below</button>
-    <div class="context-separator"></div>
-    <button class="context-menu-item" data-action="insert-col-left">Insert Column Left</button>
-    <button class="context-menu-item" data-action="insert-col-right">Insert Column Right</button>
-    <div class="context-separator"></div>
-    <button class="context-menu-item" data-action="delete-row">Delete Row</button>
-    <button class="context-menu-item" data-action="delete-col">Delete Column</button>
-    <button class="context-menu-item" data-action="delete-table">Delete Table</button>
-  `;
-  
-  menu.style.top = `${e.clientY}px`;
-  menu.style.left = `${e.clientX}px`;
-  
-  document.body.appendChild(menu);
-  contextMenuEl = menu;
-  
-  menu.addEventListener('click', (me) => {
-    const action = me.target.dataset.action;
-    if (!action) return;
-    handleTableAction(td, action);
-    removeContextMenu();
-  });
-});
-
-document.addEventListener('click', (e) => {
-  if (contextMenuEl && !contextMenuEl.contains(e.target)) {
-    removeContextMenu();
-  }
-  if (!e.target.closest('#link-popover')) {
-    removeLinkPopover();
-  }
-});
-
-function removeContextMenu() {
-  if (contextMenuEl) {
-    contextMenuEl.remove();
-    contextMenuEl = null;
-  }
-}
-
-function handleTableAction(cell, action) {
-  const row = cell.closest('tr');
-  const table = cell.closest('table');
-  const cellIndex = Array.from(row.children).indexOf(cell);
-  
-  switch (action) {
-    case 'insert-row-above': {
-      const newRow = row.cloneNode(true);
-      Array.from(newRow.children).forEach(c => c.textContent = '');
-      row.parentNode.insertBefore(newRow, row);
-      break;
-    }
-    case 'insert-row-below': {
-      const newRow = row.cloneNode(true);
-      Array.from(newRow.children).forEach(c => c.textContent = '');
-      row.parentNode.insertBefore(newRow, row.nextSibling);
-      break;
-    }
-    case 'insert-col-left': {
-      Array.from(table.rows).forEach(r => {
-        const newCell = document.createElement(cell.tagName);
-        r.insertBefore(newCell, r.children[cellIndex]);
-      });
-      break;
-    }
-    case 'insert-col-right': {
-      Array.from(table.rows).forEach(r => {
-        const newCell = document.createElement(cell.tagName);
-        r.insertBefore(newCell, r.children[cellIndex + 1]);
-      });
-      break;
-    }
-    case 'delete-row':
-      if (table.rows.length > 1) row.remove();
-      break;
-    case 'delete-col':
-      if (row.children.length > 1) {
-        Array.from(table.rows).forEach(r => {
-          if (r.children[cellIndex]) r.children[cellIndex].remove();
-        });
-      }
-      break;
-    case 'delete-table':
-      table.remove();
-      break;
-  }
-  markDirty();
-  addTableGuideBorders();
-}
-
-// --- Dirty Tracking ---
-
-function markDirty() {
-  if (!isDirty) {
-    isDirty = true;
-    updateTitle();
-  }
-}
-
-visualEditor.addEventListener('input', markDirty);
-sourceTextarea.addEventListener('input', markDirty);
-
-// --- Keyboard Shortcuts ---
-
-document.addEventListener('keydown', async (e) => {
-  const isMeta = e.metaKey || e.ctrlKey;
-  
-  if (isMeta && e.key === 'o') {
-    e.preventDefault();
-    await openFile();
-  }
-  
-  if (isMeta && e.key === 's' && e.shiftKey) {
-    e.preventDefault();
-    await saveFileAs();
-  } else if (isMeta && e.key === 's') {
-    e.preventDefault();
-    await saveFile();
-  }
-  
-  if (isMeta && e.shiftKey && e.key === 'v') {
-    e.preventDefault();
-    switchMode(editMode === 'visual' ? 'source' : 'visual');
-  }
-  
-  if (isMeta && e.key === 'k') {
-    e.preventDefault();
-    visualEditor.focus();
-    linkBtn.click();
-  }
-});
-
-// --- Init ---
+// ── Init ──
 
 openBtn.addEventListener('click', openFile);
-
-// Update toolbar button states on selection change
-document.addEventListener('selectionchange', () => {
-  if (editMode !== 'visual') return;
-  
-  boldBtn.classList.toggle('active', document.queryCommandState('bold'));
-  italicBtn.classList.toggle('active', document.queryCommandState('italic'));
-  underlineBtn.classList.toggle('active', document.queryCommandState('underline'));
-  strikeBtn.classList.toggle('active', document.queryCommandState('strikeThrough'));
-});
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -529,4 +674,22 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-console.log('PageSmith v0.1.0 ready');
+// Enable toolbar buttons for visual mode
+function setToolbarEnabled(enabled) {
+  document.querySelectorAll('#toolbar .toolbar-btn, #toolbar .toolbar-item').forEach(el => {
+    el.disabled = !enabled;
+  });
+}
+
+// Track toolbar state
+document.addEventListener('selectionchange', () => {
+  if (editMode !== 'visual') return;
+  try {
+    boldBtn.classList.toggle('active', document.queryCommandState('bold'));
+    italicBtn.classList.toggle('active', document.queryCommandState('italic'));
+    underlineBtn.classList.toggle('active', document.queryCommandState('underline'));
+    strikeBtn.classList.toggle('active', document.queryCommandState('strikeThrough'));
+  } catch (e) { /* ignore */ }
+});
+
+console.log('PageSmith v0.2 — engine-bridged editor ready');
