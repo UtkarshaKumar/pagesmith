@@ -15,6 +15,7 @@ let editMode = 'visual';
 let composing = false; // IME composition guard
 let pendingSync = null; // Debounce timer for engine sync
 let zoomLevel = 100; // Zoom percent, step 10
+let savedRange = null; // Last selection that was inside the visual editor
 
 // ── DOM refs ──
 
@@ -40,6 +41,41 @@ const alignLeftBtn = document.getElementById('align-left-btn');
 const alignCenterBtn = document.getElementById('align-center-btn');
 const alignRightBtn = document.getElementById('align-right-btn');
 const linkBtn = document.getElementById('link-btn');
+
+// ── Selection preservation ──
+// The contenteditable loses focus when a toolbar button/select is clicked,
+// which collapses the selection. We track the last in-editor selection so
+// formatting handlers can restore it before reading.
+
+document.addEventListener('selectionchange', () => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const anchor = sel.anchorNode;
+  if (anchor && visualEditor.contains(anchor)) {
+    savedRange = sel.getRangeAt(0).cloneRange();
+  }
+});
+
+function restoreSelection() {
+  if (!savedRange) return false;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(savedRange);
+  return true;
+}
+
+function getActiveSelectionText() {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
+    const t = sel.toString();
+    if (t) return t;
+  }
+  if (savedRange && !savedRange.collapsed) {
+    restoreSelection();
+    return savedRange.toString();
+  }
+  return '';
+}
 
 // ── File Operations ──
 
@@ -137,30 +173,66 @@ visualEditor.addEventListener('click', async (e) => {
   if (!interactive) return;
 
   if (e.metaKey || e.ctrlKey) {
-    if (interactive.tagName === 'A' && interactive.href) {
+    if (interactive.tagName === 'A') {
       e.preventDefault();
       e.stopPropagation();
-      const href = interactive.getAttribute('href') || '';
-      // Resolve relative paths against the current file
-      let targetPath = href;
-      if (!href.startsWith('http') && !href.startsWith('/') && currentFilePath) {
-        const dir = currentFilePath.substring(0, currentFilePath.lastIndexOf('/') + 1);
-        targetPath = dir + href;
-      }
-      // Navigate in-app: open the linked file if local, warn if external
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        alert('External URLs cannot be opened in-app. Use your browser.');
-      } else {
-        try {
-          const html = await invoke('open_file', { path: targetPath });
-          currentFilePath = targetPath; isDirty = false;
-          visualEditor.innerHTML = html;
-          visualEditor.querySelectorAll('script').forEach(s => s.remove());
-          sourceTextarea.value = html; addTableGuideBorders();
-          updateTitle(); addRecentFile(targetPath);
-        } catch (err) {
-          alert('Could not open: ' + targetPath);
+      const rawHref = interactive.getAttribute('href') || '';
+      if (!rawHref) return;
+
+      // Schemes we don't open in-app
+      if (/^(https?:|mailto:|tel:|javascript:)/i.test(rawHref)) {
+        if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
+          alert('External URLs cannot be opened in-app. Use your browser.');
         }
+        return;
+      }
+
+      // Split off the fragment (#anchor) so it's not treated as part of the path
+      const hashIdx = rawHref.indexOf('#');
+      const pathPart = hashIdx >= 0 ? rawHref.slice(0, hashIdx) : rawHref;
+      const fragment = hashIdx >= 0 ? rawHref.slice(hashIdx + 1) : '';
+
+      // Pure in-page anchor (#section) → scroll, don't open a file
+      if (!pathPart) {
+        if (fragment) {
+          const target =
+            visualEditor.querySelector('#' + CSS.escape(fragment)) ||
+            visualEditor.querySelector('[name="' + CSS.escape(fragment) + '"]');
+          if (target && typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+        return;
+      }
+
+      // Resolve relative paths against the current file's directory
+      let targetPath = pathPart;
+      if (!pathPart.startsWith('/') && currentFilePath) {
+        const dir = currentFilePath.substring(0, currentFilePath.lastIndexOf('/') + 1);
+        targetPath = dir + pathPart;
+      }
+
+      try {
+        const html = await invoke('open_file', { path: targetPath });
+        currentFilePath = targetPath; isDirty = false;
+        visualEditor.innerHTML = html;
+        visualEditor.querySelectorAll('script').forEach(s => s.remove());
+        sourceTextarea.value = html; addTableGuideBorders();
+        updateTitle(); addRecentFile(targetPath);
+
+        // If there was a fragment, scroll to it after the new file loads
+        if (fragment) {
+          requestAnimationFrame(() => {
+            const target =
+              visualEditor.querySelector('#' + CSS.escape(fragment)) ||
+              visualEditor.querySelector('[name="' + CSS.escape(fragment) + '"]');
+            if (target && typeof target.scrollIntoView === 'function') {
+              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          });
+        }
+      } catch (err) {
+        alert('Could not open: ' + targetPath);
       }
     }
     return;
@@ -266,9 +338,7 @@ function renderFromSource(source) {
 }
 
 async function wrapSelection(tag, attrStr = '') {
-  const sel = window.getSelection();
-  if (!sel.rangeCount) return;
-  const selectedText = sel.toString();
+  const selectedText = getActiveSelectionText();
   if (!selectedText) return;
 
   await syncToEngine();
@@ -288,47 +358,96 @@ italicBtn.addEventListener('click', async () => { await wrapSelection('em'); });
 underlineBtn.addEventListener('click', async () => { await wrapSelection('u'); });
 strikeBtn.addEventListener('click', async () => { await wrapSelection('s'); });
 
-async function formatAsBlock(tag, inner, wrap = true) {
-  const replacement = wrap ? `<${tag}>${inner}</${tag}>` : inner;
-  const source = await invoke('get_current_html');
-  // Use the original selected text (before we added <li> wrappers)
-  const originalText = window.getSelection()?.toString() || inner;
-  const offset = source.indexOf(originalText);
-  if (offset < 0) return;
-  await applyFormatPatch(offset, originalText.length, replacement);
-  isDirty = true;
-  updateTitle();
+// Find the nearest block ancestor of the current (or saved) selection
+// inside the visual editor. Block ops surgically replace this element
+// rather than wrapping inline — wrapping inline produces invalid HTML
+// like <p><h2>x</h2></p> that the browser silently auto-corrects away.
+const BLOCK_TAGS = /^(P|H[1-6]|DIV|BLOCKQUOTE|PRE|ARTICLE|SECTION|ASIDE|HEADER|FOOTER|MAIN|NAV|FIGURE|LI|UL|OL|DL|DD|DT|ADDRESS|HR|TABLE|TR|TD|TH)$/;
+
+function getSelectionParentBlock() {
+  let node = null;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
+    node = sel.anchorNode;
+  } else if (savedRange && savedRange.startContainer && visualEditor.contains(savedRange.startContainer)) {
+    node = savedRange.startContainer;
+  }
+  if (!node) return null;
+  if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+  while (node && node !== visualEditor && node !== document.body) {
+    const tag = node.tagName && node.tagName.toUpperCase();
+    if (tag && BLOCK_TAGS.test(tag)) return node;
+    node = node.parentNode;
+  }
+  return null;
 }
 
-ulBtn.addEventListener('click', async () => {
-  const text = window.getSelection()?.toString();
-  if (!text) return;
-  const items = text.split('\n').map(l => `<li>${l.trim() || ' '}</li>`).join('');
-  await formatAsBlock('ul', items);
-});
+// Apply a surgical edit to the source by locating the block's outerHTML.
+// Caller provides a function that takes the old outerHTML string and
+// returns the replacement HTML.
+async function patchBlock(block, makeReplacement) {
+  if (!block) return false;
+  await syncToEngine();
+  const source = await invoke('get_current_html');
+  const oldHTML = block.outerHTML;
+  const offset = source.indexOf(oldHTML);
+  if (offset < 0) return false;
+  const newHTML = makeReplacement(oldHTML, block);
+  if (newHTML == null || newHTML === oldHTML) return false;
+  await applyFormatPatch(offset, oldHTML.length, newHTML);
+  isDirty = true;
+  updateTitle();
+  return true;
+}
 
-olBtn.addEventListener('click', async () => {
-  const text = window.getSelection()?.toString();
-  if (!text) return;
-  const items = text.split('\n').map(l => `<li>${l.trim() || ' '}</li>`).join('');
-  await formatAsBlock('ol', items);
-});
+// Replace the parent block's tag with a new one, preserving inner content.
+async function changeBlockTag(newTag) {
+  const block = getSelectionParentBlock();
+  if (!block) return false;
+  // Preserve any style/class attributes from the original
+  return patchBlock(block, (_, b) => {
+    const attrs = [];
+    if (b.getAttribute('style')) attrs.push(`style="${b.getAttribute('style').replace(/"/g, '&quot;')}"`);
+    if (b.getAttribute('class')) attrs.push(`class="${b.getAttribute('class').replace(/"/g, '&quot;')}"`);
+    if (b.getAttribute('id')) attrs.push(`id="${b.getAttribute('id').replace(/"/g, '&quot;')}"`);
+    const open = attrs.length ? `<${newTag} ${attrs.join(' ')}>` : `<${newTag}>`;
+    return `${open}${b.innerHTML}</${newTag}>`;
+  });
+}
+
+// Wrap the parent block as a single-item list.
+async function wrapBlockAsList(listTag) {
+  const block = getSelectionParentBlock();
+  if (!block) return false;
+  return patchBlock(block, (_, b) => `<${listTag}><li>${b.innerHTML}</li></${listTag}>`);
+}
+
+// Apply (or update) text-align on the parent block.
+async function setBlockAlign(align) {
+  const block = getSelectionParentBlock();
+  if (!block) return false;
+  return patchBlock(block, (_, b) => {
+    const clone = b.cloneNode(true);
+    clone.style.textAlign = align;
+    return clone.outerHTML;
+  });
+}
+
+ulBtn.addEventListener('click', async () => { await wrapBlockAsList('ul'); });
+olBtn.addEventListener('click', async () => { await wrapBlockAsList('ol'); });
 
 formatSelect.addEventListener('change', async () => {
   const tag = formatSelect.value;
   if (!tag) return;
-  const text = window.getSelection()?.toString();
-  if (text) {
-    await formatAsBlock(tag, text);
-    formatSelect.value = 'p';
-  }
+  await changeBlockTag(tag);
+  formatSelect.value = 'p';
 });
 
 fontSelect.addEventListener('change', async () => {
   const font = fontSelect.value;
-  if (!font) return;
-  const text = window.getSelection()?.toString();
-  if (!text) return;
+  if (!font) { return; }
+  const text = getActiveSelectionText();
+  if (!text) { fontSelect.value = ''; return; }
   const source = await invoke('get_current_html');
   const offset = source.indexOf(text);
   if (offset >= 0) {
@@ -341,8 +460,8 @@ fontSizeSelect.addEventListener('change', async () => {
   const sizes = {'1':'8pt','2':'10pt','3':'12pt','4':'14pt','5':'18pt','6':'24pt','7':'36pt'};
   const size = sizes[fontSizeSelect.value];
   if (!size) return;
-  const text = window.getSelection()?.toString();
-  if (!text) return;
+  const text = getActiveSelectionText();
+  if (!text) { fontSizeSelect.value = ''; return; }
   const source = await invoke('get_current_html');
   const offset = source.indexOf(text);
   if (offset >= 0) {
@@ -352,15 +471,7 @@ fontSizeSelect.addEventListener('change', async () => {
 });
 
 async function applyAlignment(align) {
-  const text = window.getSelection()?.toString();
-  if (!text) return;
-  const source = await invoke('get_current_html');
-  const offset = source.indexOf(text);
-  if (offset >= 0) {
-    await applyFormatPatch(offset, text.length, `<div style="text-align:${align}">${text}</div>`);
-    isDirty = true;
-    updateTitle();
-  }
+  await setBlockAlign(align);
   updateAlignButtons(align);
 }
 
@@ -620,9 +731,7 @@ async function handleTableAction(cell, action) {
 // ── Link Editing ──
 
 linkBtn.addEventListener('click', () => {
-  const sel = window.getSelection();
-  if (!sel.rangeCount) return;
-  const selectedText = sel.toString();
+  const selectedText = getActiveSelectionText();
   if (!selectedText) return;
   showLinkPopover(selectedText);
 });
@@ -704,7 +813,6 @@ visualEditor.addEventListener('dblclick', async (e) => {
     });
     if (!selected) return;
     const img = e.target;
-    const oldSrc = img.getAttribute('src') || '';
     img.setAttribute('src', selected.split('/').pop());
     isDirty = true;
     updateTitle();
@@ -798,14 +906,24 @@ if (pdfBtn) {
 
 // ── Init ──
 
-// Toolbar click delegation: ensure all button clicks fire
-// (WKWebView can steal clicks to contenteditable area)
-document.getElementById('toolbar').addEventListener('click', (e) => {
-  // Clicks on disabled buttons or selects are handled natively
-  if (e.target.disabled || e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
-  // Ensure the click target receives the event
-  e.stopPropagation();
-});
+// Prevent toolbar buttons from stealing focus from the contenteditable.
+// Without this, mousedown shifts focus → selection collapses → every
+// formatting handler reads an empty selection and silently no-ops.
+// Belt and suspenders: also explicitly capture the live selection on
+// mousedown into savedRange BEFORE any focus shift can happen, so even if
+// preventDefault is somehow bypassed (WKWebView quirks, <select>, etc.)
+// the click handler still has a valid range to fall back on.
+document.getElementById('toolbar').addEventListener('mousedown', (e) => {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
+    const r = sel.getRangeAt(0);
+    if (!r.collapsed) savedRange = r.cloneRange();
+  }
+  const btn = e.target.closest('button');
+  if (btn && !btn.disabled) {
+    e.preventDefault();
+  }
+}, true); // capture phase — run before anything else can mutate selection
 
 openBtn.addEventListener('click', openFile);
 
@@ -833,14 +951,14 @@ function toggleRecentPanel() {
 
   panel = document.createElement('div');
   panel.id = 'recent-panel';
-  panel.style.cssText = 'position:fixed;top:80px;left:12px;background:white;border:1px solid #d2d2d7;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:1000;min-width:300px;max-height:400px;overflow-y:auto;padding:4px;';
+  panel.style.cssText = 'position:fixed;top:80px;left:12px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.24);z-index:1000;min-width:300px;max-height:400px;overflow-y:auto;padding:4px;';
 
   recent.slice(0, 10).forEach(path => {
     const item = document.createElement('div');
     const filename = path.split('/').pop();
     item.className = 'context-menu-item';
     item.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;padding:8px 12px;';
-    item.innerHTML = `<span style="font-weight:500;font-size:13px">${filename}</span><span style="font-size:11px;color:#86868b;margin-top:2px">${path}</span>`;
+    item.innerHTML = `<span style="font-weight:500;font-size:13px">${filename}</span><span style="font-size:11px;color:var(--text-secondary);margin-top:2px">${path}</span>`;
     item.addEventListener('click', async () => {
       panel.remove();
       try {
@@ -879,16 +997,21 @@ function escapeHtml(str) {
 }
 
 renderRecentFiles();
-console.log('PageSmith v0.4');
+console.log('PageSmith v0.4.3 — block ops + dark-mode color fixes');
 
 // Theme toggle (auto → dark → light → auto)
+const themeBtn = document.getElementById('theme-btn');
+const themeIcons = { auto: 'brightness_auto', dark: 'dark_mode', light: 'light_mode' };
 let currentTheme = localStorage.getItem('pagesmith_theme') || 'auto';
 
 function applyTheme(theme) {
   document.documentElement.removeAttribute('data-theme');
   if (theme !== 'auto') document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem('pagesmith_theme', theme);
-  if (themeBtn) themeBtn.querySelector('.material-symbols-outlined').textContent = themeIcons[theme];
+  if (themeBtn) {
+    const icon = themeBtn.querySelector('.material-symbols-outlined');
+    if (icon) icon.textContent = themeIcons[theme] || themeIcons.auto;
+  }
 }
 
 applyTheme(currentTheme);
