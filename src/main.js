@@ -122,6 +122,30 @@ document.addEventListener('compositionend', () => {
 
 // ── Text editing: browser owns DOM, engine synced in background ──
 
+// Interactive elements inside contenteditable: normal click = edit,
+// Cmd+click = actual action (follow link, submit button).
+// This lets users access content hidden inside buttons/links.
+
+// Block mousedown on links (browsers navigate on mousedown)
+visualEditor.addEventListener('mousedown', (e) => {
+  const link = e.target.closest('a');
+  if (link && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault();
+  }
+});
+
+visualEditor.addEventListener('click', (e) => {
+  const interactive = e.target.closest('a, button, input, select, textarea, details, summary, [onclick]');
+  if (!interactive) return;
+
+  // Cmd+click or Ctrl+click = let the action through
+  if (e.metaKey || e.ctrlKey) return;
+
+  // Otherwise: prevent default action, place cursor for editing
+  e.preventDefault();
+  e.stopPropagation();
+});
+
 // WKWebView Sequoia fix: TSM (macOS Text Services Manager) can misroute
 // text insertion in flex scroll containers. beforeinput fires with correct
 // selection before TSM corrupts the insertion point.
