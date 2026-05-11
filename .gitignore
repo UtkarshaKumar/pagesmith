@@ -1,3 +1,4 @@
+# Build artifacts
 .workflow/
 .DS_Store
 target/
@@ -5,3 +6,21 @@ node_modules/
 dist/
 src-tauri/gen/
 *.dmg
+
+# Internal planning and orchestration artifacts — kept locally, not public
+AGENTS.md
+CONSTITUTION.md
+DECISIONS.md
+MVP-OPTIONS.md
+ORCHESTRATION.md
+PROBLEM.md
+QA-SIGNOFF.md
+TASKS.md
+claude.md
+CLAUDE.md
+forge.yaml
+.forge/
+requirements/
+designs/
+specs/
+workflow/
