@@ -798,6 +798,15 @@ if (pdfBtn) {
 
 // ── Init ──
 
+// Toolbar click delegation: ensure all button clicks fire
+// (WKWebView can steal clicks to contenteditable area)
+document.getElementById('toolbar').addEventListener('click', (e) => {
+  // Clicks on disabled buttons or selects are handled natively
+  if (e.target.disabled || e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
+  // Ensure the click target receives the event
+  e.stopPropagation();
+});
+
 openBtn.addEventListener('click', openFile);
 
 // Toolbar Open button (visible when a file is open)

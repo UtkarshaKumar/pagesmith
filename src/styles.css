@@ -194,7 +194,7 @@ body {
   flex-shrink: 0;
   overflow-x: auto;
   position: relative;
-  z-index: 10;
+  z-index: 100;
   pointer-events: auto;
   -webkit-user-select: none;
   user-select: none;
@@ -255,7 +255,6 @@ body {
   font-size: 20px;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
   color: inherit;
-  pointer-events: none;
 }
 
 .toolbar-btn.active .material-symbols-outlined {
