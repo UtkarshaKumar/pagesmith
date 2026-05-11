@@ -28,6 +28,7 @@ fn main() {
             commands::get_file_info,
             commands::set_source_content,
             commands::replace_in_source,
+            commands::export_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PageSmith");

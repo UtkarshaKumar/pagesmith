@@ -748,7 +748,50 @@ async function renderRecentFiles() {
   });
 }
 
+// ── PDF Export ──
+
+const pdfBtn = document.getElementById('pdf-btn');
+if (pdfBtn) {
+  pdfBtn.addEventListener('click', async () => {
+    try {
+      if (editMode === 'source') {
+        await invoke('set_source_content', { content: sourceTextarea.value });
+      } else {
+        await syncToEngine();
+      }
+      const filePath = await save({
+        filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+        defaultPath: (currentFilePath || 'document').replace(/\.html?$/i, '') + '.pdf',
+      });
+      if (!filePath) return;
+      await invoke('export_pdf', { path: filePath });
+      alert('PDF exported to ' + filePath);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
+  });
+}
+
 // ── Init ──
+
+// Toolbar state tracking — update icon active states on cursor movement
+function updateToolbarState() {
+  if (editMode !== 'visual') return;
+  try {
+    const b = document.queryCommandState('bold');
+    const i = document.queryCommandState('italic');
+    const u = document.queryCommandState('underline');
+    const s = document.queryCommandState('strikeThrough');
+    boldBtn.classList.toggle('active', b);
+    italicBtn.classList.toggle('active', i);
+    underlineBtn.classList.toggle('active', u);
+    strikeBtn.classList.toggle('active', s);
+  } catch (e) { /* ignore */ }
+}
+
+document.addEventListener('selectionchange', updateToolbarState);
+visualEditor.addEventListener('click', updateToolbarState);
+visualEditor.addEventListener('keyup', updateToolbarState);
 
 openBtn.addEventListener('click', openFile);
 
@@ -756,6 +799,53 @@ openBtn.addEventListener('click', openFile);
 const toolbarOpenBtn = document.getElementById('toolbar-open-btn');
 if (toolbarOpenBtn) {
   toolbarOpenBtn.addEventListener('click', openFile);
+}
+
+// Recent files dropdown from toolbar
+const recentBtn = document.getElementById('recent-btn');
+if (recentBtn) {
+  recentBtn.addEventListener('click', toggleRecentPanel);
+}
+
+function toggleRecentPanel() {
+  let panel = document.getElementById('recent-panel');
+  if (panel) { panel.remove(); return; }
+
+  const recent = getRecentFiles();
+  if (recent.length === 0) {
+    alert('No recent files.');
+    return;
+  }
+
+  panel = document.createElement('div');
+  panel.id = 'recent-panel';
+  panel.style.cssText = 'position:fixed;top:80px;left:12px;background:white;border:1px solid #d2d2d7;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:1000;min-width:300px;max-height:400px;overflow-y:auto;padding:4px;';
+
+  recent.slice(0, 10).forEach(path => {
+    const item = document.createElement('div');
+    const filename = path.split('/').pop();
+    item.className = 'context-menu-item';
+    item.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;padding:8px 12px;';
+    item.innerHTML = `<span style="font-weight:500;font-size:13px">${filename}</span><span style="font-size:11px;color:#86868b;margin-top:2px">${path}</span>`;
+    item.addEventListener('click', async () => {
+      panel.remove();
+      try {
+        const html = await invoke('open_file', { path });
+        currentFilePath = path; isDirty = false;
+        visualEditor.innerHTML = html;
+        visualEditor.querySelectorAll('script').forEach(s => s.remove());
+        sourceTextarea.value = html; addTableGuideBorders();
+        showEditor(); updateTitle(); addRecentFile(path);
+      } catch (err) { alert('File not found: ' + path); renderRecentFiles(); }
+    });
+    panel.appendChild(item);
+  });
+
+  document.body.appendChild(panel);
+
+  // Close on outside click
+  const close = (e) => { if (!panel.contains(e.target) && e.target !== recentBtn) { panel.remove(); document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
 }
 
 function showEditor() {

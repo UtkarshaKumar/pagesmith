@@ -160,3 +160,16 @@ fn find_text(haystack: &str, needle: &str, hint: usize) -> Option<usize> {
         (None, None) => None,
     }
 }
+
+#[tauri::command]
+pub fn export_pdf(state: State<AppState>, path: String) -> Result<(), String> {
+    let model = state.model.lock().unwrap();
+    let model = model.as_ref().ok_or("No file open")?;
+    let html = model.as_str().map_err(|e| e.to_string())?;
+    // Wrap in a basic HTML document if not already
+    let doc = if html.contains("<html") { html.to_string() } else {
+        format!("<!DOCTYPE html><html><head><meta charset='utf-8'><style>body{{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;line-height:1.6}}</style></head><body>{}</body></html>", html)
+    };
+    std::fs::write(std::path::Path::new(&path), &doc).map_err(|e| e.to_string())?;
+    Ok(())
+}
