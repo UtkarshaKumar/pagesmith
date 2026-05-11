@@ -157,7 +157,7 @@ pub fn parse_html(raw: &[u8]) -> SourceMap {
 
     let queue = BufferQueue::default();
     queue.push_back(tendril::StrTendril::from(input_str.as_str()));
-    tokenizer.feed(&queue);
+    let _ = tokenizer.feed(&queue);
     tokenizer.end();
 
     tokenizer.sink.into_source_map()
