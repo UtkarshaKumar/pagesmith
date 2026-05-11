@@ -268,24 +268,30 @@ italicBtn.addEventListener('click', async () => { await wrapSelection('em'); });
 underlineBtn.addEventListener('click', async () => { await wrapSelection('u'); });
 strikeBtn.addEventListener('click', async () => { await wrapSelection('s'); });
 
-async function formatAsBlock(tag, text) {
-  const replacement = `<${tag}>${text}</${tag}>`;
+async function formatAsBlock(tag, inner, wrap = true) {
+  const replacement = wrap ? `<${tag}>${inner}</${tag}>` : inner;
   const source = await invoke('get_current_html');
-  const offset = source.indexOf(text);
+  // Use the original selected text (before we added <li> wrappers)
+  const originalText = window.getSelection()?.toString() || inner;
+  const offset = source.indexOf(originalText);
   if (offset < 0) return;
-  await applyFormatPatch(offset, text.length, replacement);
+  await applyFormatPatch(offset, originalText.length, replacement);
   isDirty = true;
   updateTitle();
 }
 
 ulBtn.addEventListener('click', async () => {
   const text = window.getSelection()?.toString();
-  if (text) await formatAsBlock('ul', text);
+  if (!text) return;
+  const items = text.split('\n').map(l => `<li>${l.trim() || ' '}</li>`).join('');
+  await formatAsBlock('ul', items);
 });
 
 olBtn.addEventListener('click', async () => {
   const text = window.getSelection()?.toString();
-  if (text) await formatAsBlock('ol', text);
+  if (!text) return;
+  const items = text.split('\n').map(l => `<li>${l.trim() || ' '}</li>`).join('');
+  await formatAsBlock('ol', items);
 });
 
 formatSelect.addEventListener('change', async () => {
@@ -601,8 +607,6 @@ linkBtn.addEventListener('click', () => {
   showLinkPopover(selectedText);
 });
 
-let linkOffset = 0;
-
 function showLinkPopover(selectedText) {
   removeLinkPopover();
   const popover = document.createElement('div');
@@ -774,25 +778,6 @@ if (pdfBtn) {
 
 // ── Init ──
 
-// Toolbar state tracking — update icon active states on cursor movement
-function updateToolbarState() {
-  if (editMode !== 'visual') return;
-  try {
-    const b = document.queryCommandState('bold');
-    const i = document.queryCommandState('italic');
-    const u = document.queryCommandState('underline');
-    const s = document.queryCommandState('strikeThrough');
-    boldBtn.classList.toggle('active', b);
-    italicBtn.classList.toggle('active', i);
-    underlineBtn.classList.toggle('active', u);
-    strikeBtn.classList.toggle('active', s);
-  } catch (e) { /* ignore */ }
-}
-
-document.addEventListener('selectionchange', updateToolbarState);
-visualEditor.addEventListener('click', updateToolbarState);
-visualEditor.addEventListener('keyup', updateToolbarState);
-
 openBtn.addEventListener('click', openFile);
 
 // Toolbar Open button (visible when a file is open)
@@ -864,18 +849,11 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// Warn on unsaved changes
-window.addEventListener('beforeunload', (e) => {
-  if (isDirty) { e.preventDefault(); e.returnValue = ''; }
-});
-
 renderRecentFiles();
 console.log('PageSmith v0.4');
 
 // Theme toggle (auto → dark → light → auto)
-const themeBtn = document.getElementById('theme-btn');
-const themeIcons = { auto: 'brightness_auto', dark: 'dark_mode', light: 'light_mode' };
-const currentTheme = localStorage.getItem('pagesmith_theme') || 'auto';
+let currentTheme = localStorage.getItem('pagesmith_theme') || 'auto';
 
 function applyTheme(theme) {
   document.documentElement.removeAttribute('data-theme');
@@ -888,9 +866,8 @@ applyTheme(currentTheme);
 if (themeBtn) {
   themeBtn.addEventListener('click', () => {
     const cycle = { auto: 'dark', dark: 'light', light: 'auto' };
-    applyTheme(cycle[currentTheme] || 'auto');
-    // Update parent variable since it's const-scoped locally
-    window.__theme = cycle[currentTheme] || 'auto';
+    currentTheme = cycle[currentTheme] || 'auto';
+    applyTheme(currentTheme);
   });
 }
 
