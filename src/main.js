@@ -6,7 +6,6 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { openUrl } from '@tauri-apps/plugin-opener';
 
 // ── State ──
 
@@ -141,7 +140,28 @@ visualEditor.addEventListener('click', async (e) => {
     if (interactive.tagName === 'A' && interactive.href) {
       e.preventDefault();
       e.stopPropagation();
-      await openUrl(interactive.href);
+      const href = interactive.getAttribute('href') || '';
+      // Resolve relative paths against the current file
+      let targetPath = href;
+      if (!href.startsWith('http') && !href.startsWith('/') && currentFilePath) {
+        const dir = currentFilePath.substring(0, currentFilePath.lastIndexOf('/') + 1);
+        targetPath = dir + href;
+      }
+      // Navigate in-app: open the linked file if local, warn if external
+      if (href.startsWith('http://') || href.startsWith('https://')) {
+        alert('External URLs cannot be opened in-app. Use your browser.');
+      } else {
+        try {
+          const html = await invoke('open_file', { path: targetPath });
+          currentFilePath = targetPath; isDirty = false;
+          visualEditor.innerHTML = html;
+          visualEditor.querySelectorAll('script').forEach(s => s.remove());
+          sourceTextarea.value = html; addTableGuideBorders();
+          updateTitle(); addRecentFile(targetPath);
+        } catch (err) {
+          alert('Could not open: ' + targetPath);
+        }
+      }
     }
     return;
   }
