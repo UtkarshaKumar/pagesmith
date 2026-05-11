@@ -122,28 +122,36 @@ document.addEventListener('compositionend', () => {
 
 // ── Text editing: browser owns DOM, engine synced in background ──
 
-// Interactive elements inside contenteditable: normal click = edit,
-// Cmd+click = actual action (follow link, submit button).
-// This lets users access content hidden inside buttons/links.
-
-// Block mousedown on links (browsers navigate on mousedown)
+// Interactive elements: normal click = edit mode, Cmd+click = actual action.
+// Both mousedown AND click must be intercepted because browsers navigate
+// links on mousedown, and contenteditable has its own click handling.
 visualEditor.addEventListener('mousedown', (e) => {
-  const link = e.target.closest('a');
-  if (link && !e.metaKey && !e.ctrlKey) {
-    e.preventDefault();
+  const interactive = e.target.closest('a, button, input:not([type=text]), select, textarea, [onclick]');
+  if (!interactive) return;
+
+  if (e.metaKey || e.ctrlKey) {
+    // Cmd+click: let the browser handle the action natively
+    return;
   }
+  // Normal click: block default (navigation, form submit, etc.)
+  e.preventDefault();
 });
 
 visualEditor.addEventListener('click', (e) => {
-  const interactive = e.target.closest('a, button, input, select, textarea, details, summary, [onclick]');
+  const interactive = e.target.closest('a, button, input:not([type=text]), select, textarea, details, summary, [onclick]');
   if (!interactive) return;
 
-  // Cmd+click or Ctrl+click = let the action through
-  if (e.metaKey || e.ctrlKey) return;
+  if (e.metaKey || e.ctrlKey) {
+    // Cmd+click on link: manually open in default browser
+    if (interactive.tagName === 'A' && interactive.href) {
+      e.preventDefault();
+      window.open(interactive.href, '_blank');
+    }
+    return;
+  }
 
-  // Otherwise: prevent default action, place cursor for editing
+  // Normal click: prevent action, stay in edit mode
   e.preventDefault();
-  e.stopPropagation();
 });
 
 // WKWebView Sequoia fix: TSM (macOS Text Services Manager) can misroute
