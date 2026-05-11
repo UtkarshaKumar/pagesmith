@@ -138,8 +138,10 @@ pub fn redo(state: State<AppState>) -> Result<String, String> {
     let mut model = state.model.lock().unwrap();
     let model = model.as_mut().ok_or("No file open")?;
 
-    let forward = state.undo_stack.lock().unwrap().redo()
-        .ok_or("Nothing to redo")?;
+    let forward = {
+        let mut stack = state.undo_stack.lock().unwrap();
+        stack.redo(model).ok_or("Nothing to redo")?
+    };
 
     forward.apply(model).map_err(|e| e.to_string())?;
 
@@ -210,6 +212,8 @@ pub fn set_source_content(state: State<AppState>, content: String) -> Result<(),
     let model = model.as_mut().ok_or("No file open")?;
     model.raw = content.into_bytes();
     model.is_dirty = true;
+    // Rebuild source map for the new content
+    model.source_map = parser::parse_html(&model.raw);
     Ok(())
 }
 

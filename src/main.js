@@ -1,6 +1,7 @@
-// PageSmith v0.2 — Visual editor bridged to surgical Rust engine
-// Every edit goes through invoke('apply_patch', ...) to the Rust engine.
-// Constitution E1: Source buffer is truth. DOM is derived view.
+// PageSmith v0.3 — source-mapped visual editor
+// Every text node is annotated with its byte offset in the engine's source buffer.
+// Cursor positions are tracked as byte offsets, not DOM positions.
+// Constitution E1: Source buffer is truth. DOM is annotated derived view.
 
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
@@ -10,7 +11,7 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 let currentFilePath = null;
 let isDirty = false;
 let editMode = 'visual'; // 'visual' | 'source'
-let lastRenderedHTML = ''; // Track for diff detection
+let lastSource = ''; // Full HTML source from engine
 
 // ── DOM refs ──
 
@@ -23,7 +24,6 @@ const visualModeBtn = document.getElementById('visual-mode-btn');
 const sourceModeBtn = document.getElementById('source-mode-btn');
 const openBtn = document.getElementById('open-btn');
 
-// Toolbar refs
 const boldBtn = document.getElementById('bold-btn');
 const italicBtn = document.getElementById('italic-btn');
 const underlineBtn = document.getElementById('underline-btn');
@@ -48,15 +48,11 @@ async function openFile() {
     });
     if (!selected) return;
 
-    // Use engine to open file
     const html = await invoke('open_file', { path: selected });
     const info = await invoke('get_file_info');
-
     currentFilePath = info.path;
     isDirty = false;
-    lastRenderedHTML = html;
-
-    renderHTML(html);
+    renderFromSource(html);
     showEditor();
     updateTitle();
     addRecentFile(selected);
@@ -68,7 +64,6 @@ async function openFile() {
 async function saveFile() {
   if (!currentFilePath) return;
   try {
-    // Engine is synced via replace_in_source on each edit
     await invoke('save_file');
     isDirty = false;
     updateTitle();
@@ -83,7 +78,6 @@ async function saveFileAs() {
       filters: [{ name: 'HTML Files', extensions: ['html', 'htm'] }],
     });
     if (!filePath) return;
-
     await invoke('save_file_as', { path: filePath });
     currentFilePath = filePath;
     isDirty = false;
@@ -93,144 +87,260 @@ async function saveFileAs() {
   }
 }
 
-// ── Rendering ──
+// ── Rendering with byte-offset annotations ──
 
-function renderHTML(html) {
-  visualEditor.innerHTML = html;
-  sourceTextarea.value = html;
-  lastRenderedHTML = html;
-  addTableGuideBorders();
-  // Disable JS execution safety
+function renderFromSource(source) {
+  lastSource = source;
+  visualEditor.innerHTML = source;
+  sourceTextarea.value = source;
+  // Strip script tags (Constitution E4: no JS execution in editor)
   visualEditor.querySelectorAll('script').forEach(s => s.remove());
+  addTableGuideBorders();
+  annotateByteOffsets();
 }
 
-function showEditor() {
-  emptyState.classList.add('hidden');
-  editorView.classList.remove('hidden');
-}
+// Annotate every text node with its byte offset in the source buffer.
+// Uses text search in source to find each text node's position.
+function annotateByteOffsets() {
+  const source = lastSource;
+  let lastFoundAt = 0;
+  const walker = document.createTreeWalker(visualEditor, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const text = node.textContent;
+    if (!text.trim() && !text.includes('\n')) continue;
 
-function updateTitle() {
-  const filename = currentFilePath
-    ? currentFilePath.split('/').pop()
-    : 'Untitled';
-  document.title = (isDirty ? '● ' : '') + filename + ' — PageSmith';
-}
-
-// ── Engine Bridge: Compute and apply patches ──
-
-async function applySurgicalEdit(oldText, newText, cursorOffset, deleteLength) {
-  try {
-    // Find the edit in the source buffer by searching for oldText
-    // Simple approach: search from the cursor position
-    const html = lastRenderedHTML;
-    // Estimate byte offset from cursor position in visual text
-    // Count visible characters before cursor
-    const sel = window.getSelection();
-    let byteOffset = 0;
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      byteOffset = getByteOffsetInSource(range);
+    // Search for this text in the source, starting from last found position
+    let offset = source.indexOf(text, lastFoundAt);
+    if (offset === -1) {
+      // Try from beginning if not found after last position
+      offset = source.indexOf(text);
     }
+    if (offset >= 0) {
+      node.dataset.byteOffset = offset;
+      node.dataset.byteEnd = offset + text.length;
+      lastFoundAt = offset + text.length;
+    }
+  }
+}
 
-    // Apply the patch through the engine
-    const newHTML = await invoke('apply_patch', {
-      offset: byteOffset,
-      length: deleteLength,
-      replacement: newText,
+// Get byte offset of current cursor/selection in the source buffer
+function getCursorByteOffset() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return { start: 0, end: 0 };
+
+  const range = sel.getRangeAt(0);
+  const startNode = range.startContainer;
+  const startOffset = range.startOffset;
+  const endNode = range.endContainer;
+  const endOffset = range.endOffset;
+
+  let startByte = resolveNodeByteOffset(startNode, startOffset);
+  let endByte = resolveNodeByteOffset(endNode, endOffset);
+
+  if (startByte < 0 || endByte < 0) return { start: 0, end: 0 };
+  return { start: startByte, end: endByte };
+}
+
+// Resolve (node, offset-within-node) to a byte offset in the source buffer
+function resolveNodeByteOffset(node, localOffset) {
+  // If the node is a text node with annotation, use it directly
+  if (node.nodeType === Node.TEXT_NODE && node.dataset.byteOffset !== undefined) {
+    return parseInt(node.dataset.byteOffset) + localOffset;
+  }
+  // If cursor is in an element (between tags), walk to nearest text
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    const child = node.childNodes[localOffset];
+    if (child) {
+      return resolveNodeByteOffset(child, 0);
+    }
+    // At end of element — find last text descendant
+    const texts = [];
+    const w = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    while (w.nextNode()) texts.push(w.currentNode);
+    if (texts.length > 0) {
+      const last = texts[texts.length - 1];
+      if (last.dataset.byteOffset !== undefined) {
+        return parseInt(last.dataset.byteOffset) + last.textContent.length;
+      }
+    }
+  }
+  return -1;
+}
+
+// Restore cursor to a specific byte offset in the source
+function restoreCursorToByteOffset(byteOffset) {
+  // Clamp
+  byteOffset = Math.max(0, Math.min(byteOffset, lastSource.length));
+
+  // Find the text node that contains this byte offset
+  const walker = document.createTreeWalker(visualEditor, NodeFilter.SHOW_TEXT);
+  let bestNode = null;
+  let bestStart = 0;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node.dataset.byteOffset === undefined) continue;
+    const start = parseInt(node.dataset.byteOffset);
+    const end = parseInt(node.dataset.byteEnd);
+    if (byteOffset >= start && byteOffset <= end) {
+      const localOffset = byteOffset - start;
+      setCursorInNode(node, localOffset);
+      return;
+    }
+    // Track closest node after the target
+    if (byteOffset < start && (!bestNode || start < bestStart)) {
+      bestNode = node;
+      bestStart = start;
+    }
+  }
+  // If we fell through, use best match or end of document
+  if (bestNode) {
+    setCursorInNode(bestNode, 0);
+  }
+}
+
+function setCursorInNode(node, offset) {
+  const sel = window.getSelection();
+  try {
+    const range = document.createRange();
+    range.setStart(node, Math.min(offset, node.textContent.length));
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (e) { /* ignore */ }
+}
+
+// ── beforeinput handler: intercept all edits, apply via engine ──
+
+// Save cursor byte offset before each edit
+let pendingCursorByte = 0;
+
+visualEditor.addEventListener('beforeinput', (e) => {
+  if (editMode !== 'visual') return;
+
+  // Save cursor position as byte offset
+  const cursor = getCursorByteOffset();
+  pendingCursorByte = cursor.start;
+
+  // For all cancelable inputs, prevent browser from modifying DOM
+  // We'll apply the change through the engine
+  if (e.inputType === 'insertText' ||
+      e.inputType === 'insertParagraph' ||
+      e.inputType === 'insertLineBreak' ||
+      e.inputType === 'deleteContentBackward' ||
+      e.inputType === 'deleteContentForward' ||
+      e.inputType === 'deleteWordBackward' ||
+      e.inputType === 'deleteWordForward' ||
+      e.inputType === 'deleteSoftLineBackward' ||
+      e.inputType === 'deleteHardLineBackward') {
+    e.preventDefault();
+  }
+});
+
+visualEditor.addEventListener('input', async (e) => {
+  if (editMode !== 'visual') return;
+
+  // Build the edit from what happened in contenteditable
+  const afterHTML = visualEditor.innerHTML;
+  const beforeHTML = lastSource; // Source is our truth, not previous innerHTML
+
+  // Find common prefix
+  let prefixLen = 0;
+  while (prefixLen < beforeHTML.length && prefixLen < afterHTML.length
+    && beforeHTML[prefixLen] === afterHTML[prefixLen]) {
+    prefixLen++;
+  }
+
+  // Find common suffix
+  let beforeEnd = beforeHTML.length;
+  let afterEnd = afterHTML.length;
+  while (beforeEnd > prefixLen && afterEnd > prefixLen
+    && beforeHTML[beforeEnd - 1] === afterHTML[afterEnd - 1]) {
+    beforeEnd--;
+    afterEnd--;
+  }
+
+  const oldText = beforeHTML.slice(prefixLen, beforeEnd);
+  const newText = afterHTML.slice(prefixLen, afterEnd);
+
+  // Apply to engine with the cursor byte offset as hint
+  try {
+    const result = await invoke('replace_in_source', {
+      offsetHint: pendingCursorByte,
+      oldText: oldText,
+      newText: newText,
     });
 
-    lastRenderedHTML = newHTML;
     isDirty = true;
     updateTitle();
 
     // Re-render and restore cursor
-    const savedOffset = byteOffset + newText.length;
-    renderHTMLKeepCursor(newHTML, savedOffset);
+    const newCursorByte = result.offset + result.new_length;
+    renderFromSource(result.source);
+    restoreCursorToByteOffset(newCursorByte);
   } catch (err) {
-    console.error('Patch failed:', err);
-  }
-}
-
-// Estimate byte offset by counting innerHTML bytes before a DOM range.
-// This includes HTML tags, which is necessary because the source buffer
-// is raw HTML, not just text content.
-function getByteOffsetInSource(range) {
-  const pre = document.createRange();
-  pre.selectNodeContents(visualEditor);
-  pre.setEnd(range.startContainer, range.startOffset);
-
-  // Get the HTML fragment before the cursor
-  const fragment = pre.cloneContents();
-  const temp = document.createElement('div');
-  temp.appendChild(fragment);
-  const htmlBefore = temp.innerHTML;
-
-  // Count the bytes of the HTML before the cursor
-  // This gives us an approximate byte offset in the source buffer
-  // For simple HTML, this matches 1:1 with the source
-  return htmlBefore.length;
-}
-
-// Re-render but restore cursor to the saved offset in text content
-function renderHTMLKeepCursor(html, textOffset) {
-  visualEditor.innerHTML = html;
-  addTableGuideBorders();
-  visualEditor.querySelectorAll('script').forEach(s => s.remove());
-
-  // Restore cursor at text offset
-  try {
-    const sel = window.getSelection();
-    const range = setCursorAtTextOffset(visualEditor, textOffset);
-    if (range) {
-      sel.removeAllRanges();
-      sel.addRange(range);
+    console.warn('replace_in_source failed, trying apply_patch:', err);
+    // Fallback: try apply_patch with exact offset
+    try {
+      const result = await invoke('apply_patch', {
+        offset: pendingCursorByte,
+        length: oldText.length,
+        replacement: newText,
+      });
+      isDirty = true;
+      updateTitle();
+      const newCursorByte = pendingCursorByte + newText.length;
+      renderFromSource(result);
+      restoreCursorToByteOffset(newCursorByte);
+    } catch (err2) {
+      console.error('Edit failed:', err2);
+      // Reload from engine
+      try {
+        const html = await invoke('get_current_html');
+        renderFromSource(html);
+      } catch (e3) { /* give up */ }
     }
-  } catch (e) { /* ignore cursor restore failures */ }
-}
-
-function setCursorAtTextOffset(node, targetOffset) {
-  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
-  let currentOffset = 0;
-  let textNode;
-  while ((textNode = walker.nextNode())) {
-    const len = textNode.textContent.length;
-    if (currentOffset + len >= targetOffset) {
-      const range = document.createRange();
-      range.setStart(textNode, targetOffset - currentOffset);
-      range.collapse(true);
-      return range;
-    }
-    currentOffset += len;
   }
-  return null;
-}
+});
 
-// ── Toolbar: Formatting through engine ──
+// ── Formatting via engine with exact byte offsets ──
 
-// Each format action computes the patch and sends to engine
 async function wrapSelection(tag, attrStr = '') {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const selectedText = sel.toString();
   if (!selectedText) return;
 
+  const cursor = getCursorByteOffset();
   const openTag = attrStr ? `<${tag} ${attrStr}>` : `<${tag}>`;
   const closeTag = `</${tag}>`;
   const replacement = openTag + selectedText + closeTag;
 
   try {
-    // Use search-based replacement — engine finds the text and replaces it
-    const result = await invoke('replace_in_source', {
-      offsetHint: 0,
-      oldText: selectedText,
-      newText: replacement,
+    const newSource = await invoke('apply_patch', {
+      offset: cursor.start,
+      length: selectedText.length,
+      replacement,
     });
-    lastRenderedHTML = result.source;
     isDirty = true;
     updateTitle();
-    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+    renderFromSource(newSource);
+    // Cursor after the closing tag
+    restoreCursorToByteOffset(cursor.start + replacement.length);
   } catch (err) {
-    console.error('Format patch failed:', err);
+    console.error('Format failed:', err);
+    // Try replace_in_source as fallback
+    try {
+      const result = await invoke('replace_in_source', {
+        offsetHint: cursor.start,
+        oldText: selectedText,
+        newText: replacement,
+      });
+      isDirty = true;
+      updateTitle();
+      renderFromSource(result.source);
+      restoreCursorToByteOffset(result.offset + result.new_length);
+    } catch (err2) { console.error('Format fallback failed:', err2); }
   }
 }
 
@@ -239,19 +349,18 @@ italicBtn.addEventListener('click', () => wrapSelection('em'));
 underlineBtn.addEventListener('click', () => wrapSelection('u'));
 strikeBtn.addEventListener('click', () => wrapSelection('s'));
 
-// Lists
 ulBtn.addEventListener('click', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
   if (!text) return;
+  const cursor = getCursorByteOffset();
   const replacement = '<ul><li>' + text + '</li></ul>';
   try {
-    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
-    lastRenderedHTML = result.source;
-    isDirty = true;
-    updateTitle();
-    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+    const newSource = await invoke('apply_patch', { offset: cursor.start, length: text.length, replacement });
+    isDirty = true; updateTitle();
+    renderFromSource(newSource);
+    restoreCursorToByteOffset(cursor.start + replacement.length);
   } catch (err) { console.error(err); }
 });
 
@@ -260,35 +369,33 @@ olBtn.addEventListener('click', async () => {
   if (!sel.rangeCount) return;
   const text = sel.toString();
   if (!text) return;
+  const cursor = getCursorByteOffset();
   const replacement = '<ol><li>' + text + '</li></ol>';
   try {
-    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
-    lastRenderedHTML = result.source;
-    isDirty = true;
-    updateTitle();
-    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+    const newSource = await invoke('apply_patch', { offset: cursor.start, length: text.length, replacement });
+    isDirty = true; updateTitle();
+    renderFromSource(newSource);
+    restoreCursorToByteOffset(cursor.start + replacement.length);
   } catch (err) { console.error(err); }
 });
 
-// Paragraph format
 formatSelect.addEventListener('change', async () => {
   const tag = formatSelect.value;
   if (!tag) return;
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString() || ' ';
+  const cursor = getCursorByteOffset();
   const replacement = `<${tag}>${text}</${tag}>`;
   try {
-    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
-    lastRenderedHTML = result.source;
-    isDirty = true;
-    updateTitle();
-    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+    const newSource = await invoke('apply_patch', { offset: cursor.start, length: text.length, replacement });
+    isDirty = true; updateTitle();
+    renderFromSource(newSource);
+    restoreCursorToByteOffset(cursor.start + replacement.length);
   } catch (err) { console.error(err); }
   formatSelect.value = 'p';
 });
 
-// Font
 fontSelect.addEventListener('change', async () => {
   const font = fontSelect.value;
   if (!font) return;
@@ -296,16 +403,16 @@ fontSelect.addEventListener('change', async () => {
   if (!sel.rangeCount) return;
   const text = sel.toString();
   if (!text) return;
+  const cursor = getCursorByteOffset();
   const replacement = `<span style="font-family:${font}">${text}</span>`;
   try {
-    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
-    lastRenderedHTML = result.source;
-    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+    const newSource = await invoke('apply_patch', { offset: cursor.start, length: text.length, replacement });
+    renderFromSource(newSource);
+    restoreCursorToByteOffset(cursor.start + replacement.length);
   } catch (err) { console.error(err); }
   fontSelect.value = '';
 });
 
-// Font size
 fontSizeSelect.addEventListener('change', async () => {
   const sizes = {'1':'8pt','2':'10pt','3':'12pt','4':'14pt','5':'18pt','6':'24pt','7':'36pt'};
   const size = sizes[fontSizeSelect.value];
@@ -314,28 +421,28 @@ fontSizeSelect.addEventListener('change', async () => {
   if (!sel.rangeCount) return;
   const text = sel.toString();
   if (!text) return;
+  const cursor = getCursorByteOffset();
   const replacement = `<span style="font-size:${size}">${text}</span>`;
   try {
-    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
-    lastRenderedHTML = result.source;
-    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+    const newSource = await invoke('apply_patch', { offset: cursor.start, length: text.length, replacement });
+    renderFromSource(newSource);
+    restoreCursorToByteOffset(cursor.start + replacement.length);
   } catch (err) { console.error(err); }
   fontSizeSelect.value = '';
 });
 
-// Alignment
 async function applyAlignment(align) {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
   if (!text) return;
+  const cursor = getCursorByteOffset();
   const replacement = `<div style="text-align:${align}">${text}</div>`;
   try {
-    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
-    lastRenderedHTML = result.source;
-    isDirty = true;
-    updateTitle();
-    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+    const newSource = await invoke('apply_patch', { offset: cursor.start, length: text.length, replacement });
+    isDirty = true; updateTitle();
+    renderFromSource(newSource);
+    restoreCursorToByteOffset(cursor.start + replacement.length);
   } catch (err) { console.error(err); }
   updateAlignButtons(align);
 }
@@ -351,135 +458,6 @@ function updateAlignButtons(active) {
   if (active === 'right') alignRightBtn.classList.add('active');
 }
 
-// ── contenteditable input → search-based surgical patch ──
-
-let beforeInputHTML = '';
-
-visualEditor.addEventListener('keydown', () => {
-  // Snapshot before the edit
-  beforeInputHTML = visualEditor.innerHTML;
-});
-
-visualEditor.addEventListener('input', async () => {
-  const afterHTML = visualEditor.innerHTML;
-  const beforeHTML = beforeInputHTML;
-
-  if (beforeHTML === afterHTML) return;
-
-  // Find the exact change region by comparing before/after innerHTML
-  // Find common prefix (bytes that didn't change at the start)
-  let prefixLen = 0;
-  while (prefixLen < beforeHTML.length && prefixLen < afterHTML.length
-    && beforeHTML[prefixLen] === afterHTML[prefixLen]) {
-    prefixLen++;
-  }
-
-  // Find common suffix (bytes that didn't change at the end)
-  let suffixStartBefore = beforeHTML.length;
-  let suffixStartAfter = afterHTML.length;
-  while (suffixStartBefore > prefixLen && suffixStartAfter > prefixLen
-    && beforeHTML[suffixStartBefore - 1] === afterHTML[suffixStartAfter - 1]) {
-    suffixStartBefore--;
-    suffixStartAfter--;
-  }
-
-  const oldText = beforeHTML.slice(prefixLen, suffixStartBefore);
-  const newText = afterHTML.slice(prefixLen, suffixStartAfter);
-
-  // Ask the engine to find and replace this text in the source buffer
-  try {
-    const result = await invoke('replace_in_source', {
-      offsetHint: prefixLen,
-      oldText: oldText,
-      newText: newText,
-    });
-
-    const newSource = result.source;
-    lastRenderedHTML = newSource;
-    isDirty = true;
-    updateTitle();
-
-    // Re-render and restore cursor
-    const cursorOffset = result.offset + result.new_length;
-    visualEditor.innerHTML = newSource;
-    addTableGuideBorders();
-    visualEditor.querySelectorAll('script').forEach(s => s.remove());
-
-    // Restore cursor position
-    restoreCursorAtByteOffset(cursorOffset);
-  } catch (err) {
-    console.error('replace_in_source failed:', err);
-    // Fallback: reload from engine
-    try {
-      const html = await invoke('get_current_html');
-      lastRenderedHTML = html;
-      renderHTML(html);
-    } catch (e2) { /* give up */ }
-  }
-});
-
-// Restore cursor after re-render by counting bytes in innerHTML
-function restoreCursorAtByteOffset(targetOffset) {
-  try {
-    const html = visualEditor.innerHTML;
-    const sel = window.getSelection();
-
-    // Walk the DOM tree to find the text position at the given byte offset
-    const range = document.createRange();
-    const found = setRangeAtByteOffset(visualEditor, targetOffset);
-    if (found) {
-      sel.removeAllRanges();
-      sel.addRange(found);
-    }
-  } catch (e) { /* ignore */ }
-}
-
-// Set a DOM Range at a specific byte offset in the innerHTML
-function setRangeAtByteOffset(root, targetOffset) {
-  let byteCount = 0;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ALL, null);
-  let node;
-
-  while ((node = walker.nextNode())) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.textContent;
-      const len = text.length;
-      if (byteCount + len >= targetOffset) {
-        const range = document.createRange();
-        range.setStart(node, targetOffset - byteCount);
-        range.collapse(true);
-        return range;
-      }
-      byteCount += len;
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      // Count the element's outerHTML bytes up to its children
-      const tagName = node.tagName?.toLowerCase() || '';
-      if (tagName) {
-        // Opening tag: <tagname>
-        byteCount += tagName.length + 2; // '<' + tagname + '>'
-
-        // Count attributes
-        if (node.attributes) {
-          for (const attr of node.attributes) {
-            byteCount += 1 + attr.name.length + 2 + attr.value.length + 1; // ' name="value"'
-          }
-        }
-
-        // Self-closing check
-        const voidElements = ['br','hr','img','input','meta','link','area','base','col','embed','source','track','wbr'];
-        if (voidElements.includes(tagName)) {
-          // Already counted the full tag
-          continue;
-        }
-      }
-    } else if (node.nodeType === Node.COMMENT_NODE) {
-      byteCount += node.textContent.length + 7; // <!-- --> (7 extra chars)
-    }
-  }
-
-  return null;
-}
-
 // ── Undo/Redo via Engine ──
 
 document.addEventListener('keydown', async (e) => {
@@ -488,18 +466,16 @@ document.addEventListener('keydown', async (e) => {
   if (isMeta && e.key === 'z' && !e.shiftKey) {
     e.preventDefault();
     try {
-      const newHTML = await invoke('undo');
-      lastRenderedHTML = newHTML;
-      renderHTML(newHTML);
+      const newSource = await invoke('undo');
+      renderFromSource(newSource);
     } catch (err) { /* nothing to undo */ }
   }
 
   if (isMeta && e.key === 'z' && e.shiftKey) {
     e.preventDefault();
     try {
-      const newHTML = await invoke('redo');
-      lastRenderedHTML = newHTML;
-      renderHTML(newHTML);
+      const newSource = await invoke('redo');
+      renderFromSource(newSource);
     } catch (err) { /* nothing to redo */ }
   }
 
@@ -522,8 +498,7 @@ async function switchMode(mode) {
     // Source → Visual: send content to engine then render
     await invoke('set_source_content', { content: sourceTextarea.value });
     const html = await invoke('get_current_html');
-    lastRenderedHTML = html;
-    renderHTML(html);
+    renderFromSource(html);
   } else {
     // Visual → Source: get latest from engine
     const html = await invoke('get_current_html');
@@ -549,14 +524,12 @@ async function switchMode(mode) {
 
 function addTableGuideBorders() {
   visualEditor.querySelectorAll('table').forEach(table => {
-    table.style.setProperty('--guide-border', '1px dashed #c8c8ce');
     table.querySelectorAll('td, th').forEach(cell => {
-      cell.style.border = 'var(--guide-border)';
+      cell.style.border = '1px dashed #c8c8ce';
     });
   });
 }
 
-// Context menu
 let contextMenuEl = null;
 
 visualEditor.addEventListener('contextmenu', async (e) => {
@@ -609,6 +582,12 @@ async function handleTableAction(cell, action) {
   const cellTag = cell.tagName;
 
   let patchHTML = '';
+  const rowHTML = row.outerHTML;
+  const tableHTML = table.outerHTML;
+
+  // Find the row's position in the source
+  const cursor = getCursorByteOffset();
+
   switch (action) {
     case 'row-above': {
       const cells = Array.from({length: colCount}, () => `<${cellTag}></${cellTag}>`).join('');
@@ -620,52 +599,28 @@ async function handleTableAction(cell, action) {
       patchHTML = `<tr>${cells}</tr>`;
       break;
     }
-    case 'col-left': {
-      Array.from(table.rows).forEach(r => {
-        const newCell = document.createElement(cellTag);
-        r.insertBefore(newCell, r.children[cellIndex]);
-      });
+    case 'col-left':
+    case 'col-right':
+    case 'delete-row':
+    case 'delete-col':
+    case 'delete-table':
       return; // DOM-only for now
-    }
-    case 'col-right': {
-      Array.from(table.rows).forEach(r => {
-        const newCell = document.createElement(cellTag);
-        r.insertBefore(newCell, r.children[cellIndex + 1]);
-      });
-      return;
-    }
-    case 'delete-row': if (table.rows.length > 1) row.remove(); return;
-    case 'delete-col': {
-      if (row.children.length > 1) {
-        Array.from(table.rows).forEach(r => {
-          if (r.children[cellIndex]) r.children[cellIndex].remove();
-        });
-      }
-      return;
-    }
-    case 'delete-table': table.remove(); return;
   }
 
   if (patchHTML) {
-    // Find the table in the source and insert
-    const html = lastRenderedHTML;
-    const tableHTML = table.outerHTML;
-    const tableStart = html.indexOf(tableHTML);
-    if (tableStart >= 0 && action === 'row-above') {
-      // Insert before first row's content
-      const firstRow = table.rows[0];
-      const rowHTML = firstRow.outerHTML;
-      const rowStart = html.indexOf(rowHTML);
-      if (rowStart >= 0) {
-        const newHTML = await invoke('apply_patch', {
-          offset: rowStart,
-          length: 0,
-          replacement: patchHTML,
-        });
-        lastRenderedHTML = newHTML;
-        renderHTML(newHTML);
+    try {
+      if (action === 'row-above') {
+        const rowOffset = lastSource.indexOf(rowHTML);
+        if (rowOffset >= 0) {
+          const newSource = await invoke('apply_patch', { offset: rowOffset, length: 0, replacement: patchHTML });
+          renderFromSource(newSource);
+        }
+      } else if (action === 'row-below') {
+        const rowEnd = lastSource.indexOf(rowHTML) + rowHTML.length;
+        const newSource = await invoke('apply_patch', { offset: rowEnd, length: 0, replacement: patchHTML });
+        renderFromSource(newSource);
       }
-    }
+    } catch (err) { console.error('Table action failed:', err); }
   }
 
   isDirty = true;
@@ -684,6 +639,7 @@ linkBtn.addEventListener('click', () => {
 
 function showLinkPopover(selectedText) {
   removeLinkPopover();
+  const cursor = getCursorByteOffset();
   const popover = document.createElement('div');
   popover.id = 'link-popover';
   popover.innerHTML = `
@@ -715,15 +671,15 @@ function showLinkPopover(selectedText) {
     const targetAttr = newTab ? ' target="_blank"' : '';
     const replacement = `<a href="${url}"${targetAttr}>${text}</a>`;
     try {
-      const result = await invoke('replace_in_source', {
-        offsetHint: 0,
-        oldText: selectedText,
-        newText: replacement,
+      const newSource = await invoke('apply_patch', {
+        offset: cursor.start,
+        length: selectedText.length,
+        replacement,
       });
-      lastRenderedHTML = result.source;
       isDirty = true;
       updateTitle();
-      renderHTML(result.source);
+      renderFromSource(newSource);
+      restoreCursorToByteOffset(cursor.start + replacement.length);
     } catch (err) { console.error('Link patch failed:', err); }
     removeLinkPopover();
   });
@@ -740,7 +696,6 @@ function removeLinkPopover() {
 
 visualEditor.addEventListener('click', (e) => {
   if (e.target.tagName === 'IMG') {
-    // Select the image
     visualEditor.querySelectorAll('img.selected').forEach(img => img.classList.remove('selected'));
     e.target.classList.add('selected');
     e.target.style.outline = '2px solid var(--accent-color)';
@@ -754,39 +709,30 @@ visualEditor.addEventListener('click', (e) => {
   }
 });
 
-// Double-click image to replace
 visualEditor.addEventListener('dblclick', async (e) => {
   if (e.target.tagName !== 'IMG') return;
   e.preventDefault();
-
   try {
     const selected = await open({
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
       multiple: false,
     });
     if (!selected) return;
-
     const img = e.target;
     const oldSrc = img.getAttribute('src') || '';
-    const newSrc = selected.split('/').pop(); // Use filename as relative path
-
-    // Find the old src in the source and replace
-    const html = lastRenderedHTML;
-    const srcIndex = html.indexOf(`src="${oldSrc}"`);
+    const newSrc = selected.split('/').pop();
+    const srcIndex = lastSource.indexOf(`src="${oldSrc}"`);
     if (srcIndex >= 0) {
-      const newHTML = await invoke('apply_patch', {
-        offset: srcIndex + 5, // after src="
+      const newSource = await invoke('apply_patch', {
+        offset: srcIndex + 5,
         length: oldSrc.length,
         replacement: newSrc,
       });
-      lastRenderedHTML = newHTML;
       isDirty = true;
       updateTitle();
-      renderHTML(newHTML);
+      renderFromSource(newSource);
     }
-  } catch (err) {
-    console.error('Image replace failed:', err);
-  }
+  } catch (err) { console.error('Image replace failed:', err); }
 });
 
 // ── Recent Files ──
@@ -795,9 +741,8 @@ const RECENT_FILES_KEY = 'pagesmith_recent_files';
 const MAX_RECENT = 10;
 
 function getRecentFiles() {
-  try {
-    return JSON.parse(localStorage.getItem(RECENT_FILES_KEY) || '[]');
-  } catch { return []; }
+  try { return JSON.parse(localStorage.getItem(RECENT_FILES_KEY) || '[]'); }
+  catch { return []; }
 }
 
 function addRecentFile(path) {
@@ -813,12 +758,10 @@ async function renderRecentFiles() {
   const recent = getRecentFiles();
   const list = document.getElementById('recent-list');
   if (!list) return;
-
   if (recent.length === 0) {
     list.innerHTML = '<p class="recent-label">Recently opened files will appear here</p>';
     return;
   }
-
   list.innerHTML = recent.map(path => {
     const filename = path.split('/').pop();
     return `<div class="recent-item" data-path="${escapeHtml(path)}">
@@ -827,7 +770,6 @@ async function renderRecentFiles() {
     </div>`;
   }).join('');
 
-  // Click handler
   list.querySelectorAll('.recent-item').forEach(item => {
     item.addEventListener('click', async () => {
       const path = item.dataset.path;
@@ -836,13 +778,11 @@ async function renderRecentFiles() {
         const info = await invoke('get_file_info');
         currentFilePath = info.path;
         isDirty = false;
-        lastRenderedHTML = html;
-        renderHTML(html);
+        renderFromSource(html);
         showEditor();
         updateTitle();
         addRecentFile(path);
       } catch (err) {
-        // File no longer exists — remove from recent
         let recent = getRecentFiles();
         recent = recent.filter(p => p !== path);
         localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(recent));
@@ -856,31 +796,21 @@ async function renderRecentFiles() {
 
 openBtn.addEventListener('click', openFile);
 
+function showEditor() {
+  emptyState.classList.add('hidden');
+  editorView.classList.remove('hidden');
+}
+
+function updateTitle() {
+  const filename = currentFilePath ? currentFilePath.split('/').pop() : 'Untitled';
+  document.title = (isDirty ? '● ' : '') + filename + ' — PageSmith';
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
 }
 
-// Enable toolbar buttons for visual mode
-function setToolbarEnabled(enabled) {
-  document.querySelectorAll('#toolbar .toolbar-btn, #toolbar .toolbar-item').forEach(el => {
-    el.disabled = !enabled;
-  });
-}
-
-// Track toolbar state
-document.addEventListener('selectionchange', () => {
-  if (editMode !== 'visual') return;
-  try {
-    boldBtn.classList.toggle('active', document.queryCommandState('bold'));
-    italicBtn.classList.toggle('active', document.queryCommandState('italic'));
-    underlineBtn.classList.toggle('active', document.queryCommandState('underline'));
-    strikeBtn.classList.toggle('active', document.queryCommandState('strikeThrough'));
-  } catch (e) { /* ignore */ }
-});
-
-console.log('PageSmith v0.2 — engine-bridged editor ready');
-
-// Load recent files on startup
 renderRecentFiles();
+console.log('PageSmith v0.3 — source-mapped editor ready');

@@ -159,10 +159,11 @@ impl UndoStack {
     }
 
     /// Get the forward patch for the last undone action, moving it to undo.
-    pub fn redo(&mut self) -> Option<Patch> {
+    pub fn redo(&mut self, model: &mut super::source_model::SourceModel) -> Option<Patch> {
         let (patch, _) = self.redo_stack.pop()?;
-        // When redoing, we re-apply the forward patch
-        self.undo_stack.push((patch.clone(), vec![])); // original bytes not needed for redo forward
+        // Snapshot the bytes that will be replaced by the redo (for subsequent undo)
+        let original_bytes = model.raw[patch.offset..patch.offset + patch.replacement.len()].to_vec();
+        self.undo_stack.push((patch.clone(), original_bytes));
         Some(patch)
     }
 
