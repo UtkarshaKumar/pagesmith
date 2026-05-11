@@ -872,6 +872,28 @@ window.addEventListener('beforeunload', (e) => {
 renderRecentFiles();
 console.log('PageSmith v0.4');
 
+// Theme toggle (auto → dark → light → auto)
+const themeBtn = document.getElementById('theme-btn');
+const themeIcons = { auto: 'brightness_auto', dark: 'dark_mode', light: 'light_mode' };
+const currentTheme = localStorage.getItem('pagesmith_theme') || 'auto';
+
+function applyTheme(theme) {
+  document.documentElement.removeAttribute('data-theme');
+  if (theme !== 'auto') document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('pagesmith_theme', theme);
+  if (themeBtn) themeBtn.querySelector('.material-symbols-outlined').textContent = themeIcons[theme];
+}
+
+applyTheme(currentTheme);
+if (themeBtn) {
+  themeBtn.addEventListener('click', () => {
+    const cycle = { auto: 'dark', dark: 'light', light: 'auto' };
+    applyTheme(cycle[currentTheme] || 'auto');
+    // Update parent variable since it's const-scoped locally
+    window.__theme = cycle[currentTheme] || 'auto';
+  });
+}
+
 // Expose functions for macOS menu bar callbacks
 window.__pageSmithOpenFile = openFile;
 window.__pageSmithSaveFile = saveFile;
