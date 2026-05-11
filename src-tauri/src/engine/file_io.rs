@@ -184,6 +184,14 @@ pub fn is_externally_modified(model: &SourceModel) -> Result<bool> {
     Ok(current != model.raw)
 }
 
+/// Create a SourceModel from raw bytes (for testing without a file on disk)
+pub fn read_file_from_bytes(raw: &[u8], fake_path: &str) -> SourceModel {
+    let (encoding, _confidence) = detect_encoding(raw);
+    let mut model = SourceModel::new(raw.to_vec(), encoding.name());
+    model.file_path = Some(fake_path.to_string());
+    model
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
