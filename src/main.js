@@ -59,6 +59,7 @@ async function openFile() {
     renderHTML(html);
     showEditor();
     updateTitle();
+    addRecentFile(selected);
   } catch (err) {
     console.error('Failed to open file:', err);
   }
@@ -664,6 +665,122 @@ function removeLinkPopover() {
   if (el) el.remove();
 }
 
+// ── Image Handling ──
+
+visualEditor.addEventListener('click', (e) => {
+  if (e.target.tagName === 'IMG') {
+    // Select the image
+    visualEditor.querySelectorAll('img.selected').forEach(img => img.classList.remove('selected'));
+    e.target.classList.add('selected');
+    e.target.style.outline = '2px solid var(--accent-color)';
+    e.target.style.outlineOffset = '2px';
+  } else {
+    visualEditor.querySelectorAll('img.selected').forEach(img => {
+      img.classList.remove('selected');
+      img.style.outline = '';
+      img.style.outlineOffset = '';
+    });
+  }
+});
+
+// Double-click image to replace
+visualEditor.addEventListener('dblclick', async (e) => {
+  if (e.target.tagName !== 'IMG') return;
+  e.preventDefault();
+
+  try {
+    const selected = await open({
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
+      multiple: false,
+    });
+    if (!selected) return;
+
+    const img = e.target;
+    const oldSrc = img.getAttribute('src') || '';
+    const newSrc = selected.split('/').pop(); // Use filename as relative path
+
+    // Find the old src in the source and replace
+    const html = lastRenderedHTML;
+    const srcIndex = html.indexOf(`src="${oldSrc}"`);
+    if (srcIndex >= 0) {
+      const newHTML = await invoke('apply_patch', {
+        offset: srcIndex + 5, // after src="
+        length: oldSrc.length,
+        replacement: newSrc,
+      });
+      lastRenderedHTML = newHTML;
+      isDirty = true;
+      updateTitle();
+      renderHTML(newHTML);
+    }
+  } catch (err) {
+    console.error('Image replace failed:', err);
+  }
+});
+
+// ── Recent Files ──
+
+const RECENT_FILES_KEY = 'pagesmith_recent_files';
+const MAX_RECENT = 10;
+
+function getRecentFiles() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_FILES_KEY) || '[]');
+  } catch { return []; }
+}
+
+function addRecentFile(path) {
+  let recent = getRecentFiles();
+  recent = recent.filter(p => p !== path);
+  recent.unshift(path);
+  if (recent.length > MAX_RECENT) recent.pop();
+  localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(recent));
+  renderRecentFiles();
+}
+
+async function renderRecentFiles() {
+  const recent = getRecentFiles();
+  const list = document.getElementById('recent-list');
+  if (!list) return;
+
+  if (recent.length === 0) {
+    list.innerHTML = '<p class="recent-label">Recently opened files will appear here</p>';
+    return;
+  }
+
+  list.innerHTML = recent.map(path => {
+    const filename = path.split('/').pop();
+    return `<div class="recent-item" data-path="${escapeHtml(path)}">
+      <span class="recent-filename">${escapeHtml(filename)}</span>
+      <span class="recent-path">${escapeHtml(path)}</span>
+    </div>`;
+  }).join('');
+
+  // Click handler
+  list.querySelectorAll('.recent-item').forEach(item => {
+    item.addEventListener('click', async () => {
+      const path = item.dataset.path;
+      try {
+        const html = await invoke('open_file', { path });
+        const info = await invoke('get_file_info');
+        currentFilePath = info.path;
+        isDirty = false;
+        lastRenderedHTML = html;
+        renderHTML(html);
+        showEditor();
+        updateTitle();
+        addRecentFile(path);
+      } catch (err) {
+        // File no longer exists — remove from recent
+        let recent = getRecentFiles();
+        recent = recent.filter(p => p !== path);
+        localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(recent));
+        renderRecentFiles();
+      }
+    });
+  });
+}
+
 // ── Init ──
 
 openBtn.addEventListener('click', openFile);
@@ -693,3 +810,6 @@ document.addEventListener('selectionchange', () => {
 });
 
 console.log('PageSmith v0.2 — engine-bridged editor ready');
+
+// Load recent files on startup
+renderRecentFiles();
