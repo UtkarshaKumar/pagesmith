@@ -42,22 +42,33 @@ const linkBtn = document.getElementById('link-btn');
 
 async function openFile() {
   try {
+    console.log('[PageSmith] openFile: starting dialog...');
     const selected = await open({
       filters: [{ name: 'HTML Files', extensions: ['html', 'htm'] }],
       multiple: false,
     });
+    console.log('[PageSmith] openFile: selected =', selected);
     if (!selected) return;
 
+    console.log('[PageSmith] openFile: invoking open_file...');
     const html = await invoke('open_file', { path: selected });
+    console.log('[PageSmith] openFile: got', html.length, 'bytes from engine');
+    
     const info = await invoke('get_file_info');
+    console.log('[PageSmith] openFile: info =', info);
+    
     currentFilePath = info.path;
     isDirty = false;
+    
+    console.log('[PageSmith] openFile: rendering...');
     renderFromSource(html);
+    console.log('[PageSmith] openFile: showing editor...');
     showEditor();
     updateTitle();
     addRecentFile(selected);
+    console.log('[PageSmith] openFile: done');
   } catch (err) {
-    console.error('Failed to open file:', err);
+    console.error('[PageSmith] openFile FAILED:', err);
   }
 }
 
@@ -90,13 +101,25 @@ async function saveFileAs() {
 // ── Rendering with byte-offset annotations ──
 
 function renderFromSource(source) {
+  console.log('[PageSmith] renderFromSource: source length =', source.length);
   lastSource = source;
   visualEditor.innerHTML = source;
   sourceTextarea.value = source;
-  // Strip script tags (Constitution E4: no JS execution in editor)
   visualEditor.querySelectorAll('script').forEach(s => s.remove());
   addTableGuideBorders();
-  annotateByteOffsets();
+  try {
+    annotateByteOffsets();
+    console.log('[PageSmith] renderFromSource: annotations done');
+  } catch (e) {
+    console.warn('[PageSmith] annotateByteOffsets failed:', e);
+  }
+}
+
+function showEditor() {
+  console.log('[PageSmith] showEditor: emptyState =', !!emptyState, 'editorView =', !!editorView);
+  if (emptyState) emptyState.classList.add('hidden');
+  if (editorView) editorView.classList.remove('hidden');
+  console.log('[PageSmith] showEditor: done');
 }
 
 // Annotate every text node with its byte offset in the source buffer.
@@ -795,11 +818,6 @@ async function renderRecentFiles() {
 // ── Init ──
 
 openBtn.addEventListener('click', openFile);
-
-function showEditor() {
-  emptyState.classList.add('hidden');
-  editorView.classList.remove('hidden');
-}
 
 function updateTitle() {
   const filename = currentFilePath ? currentFilePath.split('/').pop() : 'Untitled';
