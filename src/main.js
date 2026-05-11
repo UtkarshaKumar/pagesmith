@@ -53,8 +53,7 @@ async function openFile() {
     if (!selected) return;
 
     const html = await invoke('open_file', { path: selected });
-    const info = await invoke('get_file_info');
-    currentFilePath = info.path;
+    currentFilePath = selected;
     isDirty = false;
 
     visualEditor.innerHTML = html;
@@ -65,20 +64,23 @@ async function openFile() {
     updateTitle();
     addRecentFile(selected);
   } catch (err) {
-    alert('Failed to open file: ' + err);
+    alert('Failed to open file: ' + String(err?.message || err));
   }
 }
 
 async function saveFile() {
-  if (!currentFilePath) return;
+  if (!currentFilePath) { await saveFileAs(); return; }
   try {
-    // Sync DOM to engine before save
-    await syncToEngine();
+    if (editMode === 'source') {
+      await invoke('set_source_content', { content: sourceTextarea.value });
+    } else {
+      await syncToEngine();
+    }
     await invoke('save_file');
     isDirty = false;
     updateTitle();
   } catch (err) {
-    console.error('Save failed:', err);
+    alert('Save failed: ' + String(err?.message || err));
   }
 }
 
@@ -88,38 +90,39 @@ async function saveFileAs() {
       filters: [{ name: 'HTML Files', extensions: ['html', 'htm'] }],
     });
     if (!path) return;
-    await syncToEngine();
+    if (editMode === 'source') {
+      await invoke('set_source_content', { content: sourceTextarea.value });
+    } else {
+      await syncToEngine();
+    }
     await invoke('save_file_as', { path });
     currentFilePath = path;
     isDirty = false;
     updateTitle();
   } catch (err) {
-    console.error('Save As failed:', err);
+    alert('Save As failed: ' + String(err?.message || err));
   }
 }
 
 // ── Engine sync (no DOM re-render) ──
 
 async function syncToEngine() {
-  try {
-    await invoke('set_source_content', { content: visualEditor.innerHTML });
-  } catch (err) {
-    console.error('Engine sync failed:', err);
-  }
+  await invoke('set_source_content', { content: visualEditor.innerHTML });
 }
 
 function debouncedSync() {
   if (pendingSync) clearTimeout(pendingSync);
-  pendingSync = setTimeout(syncToEngine, 300);
+  pendingSync = setTimeout(() => { syncToEngine().catch(() => {}); pendingSync = null; }, 300);
 }
 
 // ── IME composition guard ──
 
-document.addEventListener('compositionstart', () => { composing = true; });
-document.addEventListener('compositionend', () => {
+visualEditor.addEventListener('compositionstart', () => { composing = true; });
+visualEditor.addEventListener('compositionend', () => {
   composing = false;
-  syncToEngine();
+  syncToEngine().catch(() => {});
 });
+visualEditor.addEventListener('compositionupdate', () => { composing = true; }); // reset stale guard
 
 // ── Text editing: browser owns DOM, engine synced in background ──
 
@@ -149,16 +152,13 @@ visualEditor.addEventListener('click', async (e) => {
 // text insertion in flex scroll containers. beforeinput fires with correct
 // selection before TSM corrupts the insertion point.
 visualEditor.addEventListener('beforeinput', (e) => {
-  // Block contenteditable auto-formatting (1. -> ordered list, * -> bullet)
   if (e.inputType === 'insertOrderedList' || e.inputType === 'insertUnorderedList') {
-    e.preventDefault();
-    return;
+    e.preventDefault(); return;
   }
-
   if (e.inputType !== 'insertText' || e.data === null || composing) return;
-  e.preventDefault();
   const sel = window.getSelection();
-  if (!sel.rangeCount) return;
+  if (!sel.rangeCount) return; // let browser handle if no selection
+  e.preventDefault();
   const range = sel.getRangeAt(0);
   range.deleteContents();
   const text = document.createTextNode(e.data);
@@ -208,16 +208,17 @@ function restoreCursorFromPath(saved) {
       node = node.childNodes[idx];
       if (!node) return;
     }
-    // Walk into text node
+    const sel = window.getSelection();
+    const range = document.createRange();
     if (saved.textNodeIndex >= 0 && node.childNodes[saved.textNodeIndex]) {
       const textNode = node.childNodes[saved.textNodeIndex];
-      const sel = window.getSelection();
-      const range = document.createRange();
       range.setStart(textNode, Math.min(saved.textOffset, textNode.textContent.length));
-      range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
+    } else {
+      range.setStart(node, Math.min(saved.textOffset, node.childNodes.length));
     }
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
   } catch (e) { /* ignore */ }
 }
 
@@ -250,24 +251,22 @@ async function wrapSelection(tag, attrStr = '') {
   const selectedText = sel.toString();
   if (!selectedText) return;
 
-  const openTag = attrStr ? `<${tag} ${attrStr}>` : `<${tag}>`;
-  const closeTag = `</${tag}>`;
-  const replacement = openTag + selectedText + closeTag;
-
-  // Search for selected text in source to find byte offset
+  await syncToEngine();
   const source = await invoke('get_current_html');
   const offset = source.indexOf(selectedText);
   if (offset < 0) return;
 
-  await applyFormatPatch(offset, selectedText.length, replacement);
+  const openTag = attrStr ? `<${tag} ${attrStr}>` : `<${tag}>`;
+  const closeTag = `</${tag}>`;
+  await applyFormatPatch(offset, selectedText.length, openTag + selectedText + closeTag);
   isDirty = true;
   updateTitle();
 }
 
-boldBtn.addEventListener('click', () => wrapSelection('strong'));
-italicBtn.addEventListener('click', () => wrapSelection('em'));
-underlineBtn.addEventListener('click', () => wrapSelection('u'));
-strikeBtn.addEventListener('click', () => wrapSelection('s'));
+boldBtn.addEventListener('click', async () => { await wrapSelection('strong'); });
+italicBtn.addEventListener('click', async () => { await wrapSelection('em'); });
+underlineBtn.addEventListener('click', async () => { await wrapSelection('u'); });
+strikeBtn.addEventListener('click', async () => { await wrapSelection('s'); });
 
 async function formatAsBlock(tag, text) {
   const replacement = `<${tag}>${text}</${tag}>`;
@@ -362,28 +361,22 @@ imageBtn.addEventListener('click', async () => {
     });
     if (!selected) return;
 
-    const filename = selected.split('/').pop();
-    const imgHTML = `<img src="${filename}" alt="Image" />`;
-
-    // Insert at cursor
+    const img = document.createElement('img');
+    img.setAttribute('src', selected.split('/').pop());
+    img.setAttribute('alt', 'Image');
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
       range.deleteContents();
-      const temp = document.createElement('div');
-      temp.innerHTML = imgHTML;
-      const img = temp.firstChild;
       range.insertNode(img);
       range.setStartAfter(img);
       range.collapse(true);
       sel.removeAllRanges();
       sel.addRange(range);
     } else {
-      visualEditor.innerHTML += imgHTML;
+      visualEditor.insertAdjacentHTML('beforeend', img.outerHTML);
     }
-    isDirty = true;
-    updateTitle();
-    debouncedSync();
+    isDirty = true; updateTitle(); debouncedSync();
   } catch (err) { console.error('Image insert failed:', err); }
 });
 
@@ -395,9 +388,8 @@ tableBtn.addEventListener('click', () => {
   const rows = prompt('Number of rows:', '3');
   const cols = prompt('Number of columns:', '3');
   if (!rows || !cols) return;
-
-  const r = parseInt(rows) || 3;
-  const c = parseInt(cols) || 3;
+  const r = parseInt(rows), c = parseInt(cols);
+  if (isNaN(r) || isNaN(c) || r <= 0 || c <= 0) return;
   let html = '<table>';
   for (let i = 0; i < r; i++) {
     html += '<tr>';
@@ -456,7 +448,12 @@ document.addEventListener('keydown', async (e) => {
   if (isMeta && e.shiftKey && e.key === 'v') { e.preventDefault(); switchMode(editMode === 'visual' ? 'source' : 'visual'); }
   if (isMeta && e.key === 'k') { e.preventDefault(); linkBtn.click(); }
 
-  // Zoom: Cmd+/Cmd-/Cmd+0
+  if (isMeta && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+    e.preventDefault();
+    await switchMode(editMode === 'visual' ? 'source' : 'visual');
+  }
+
+  // Zoom
   if (isMeta && (e.key === '=' || e.key === '+')) {
     e.preventDefault();
     zoomLevel = Math.min(zoomLevel + 10, 300);
@@ -481,20 +478,23 @@ sourceModeBtn.addEventListener('click', () => switchMode('source'));
 
 async function switchMode(mode) {
   if (mode === editMode) return;
-
-  if (editMode === 'source') {
-    await invoke('set_source_content', { content: sourceTextarea.value });
-    const source = await invoke('get_current_html');
-    visualEditor.innerHTML = source;
-    visualEditor.querySelectorAll('script').forEach(s => s.remove());
-    addTableGuideBorders();
-  } else {
-    await syncToEngine();
-    const source = await invoke('get_current_html');
-    sourceTextarea.value = source;
+  try {
+    if (editMode === 'source') {
+      await invoke('set_source_content', { content: sourceTextarea.value });
+      const source = await invoke('get_current_html');
+      visualEditor.innerHTML = source;
+      visualEditor.querySelectorAll('script').forEach(s => s.remove());
+      addTableGuideBorders();
+    } else {
+      await syncToEngine();
+      const source = await invoke('get_current_html');
+      sourceTextarea.value = source;
+    }
+    editMode = mode;
+  } catch (err) {
+    console.error('Mode switch failed:', err);
+    return;
   }
-
-  editMode = mode;
   visualEditor.classList.toggle('hidden', mode !== 'visual');
   sourceEditor.classList.toggle('hidden', mode !== 'source');
   visualModeBtn.classList.toggle('active', mode === 'visual');
@@ -532,8 +532,7 @@ visualEditor.addEventListener('contextmenu', async (e) => {
     <button class="context-menu-item" data-action="delete-col">Delete Column</button>
     <button class="context-menu-item" data-action="delete-table">Delete Table</button>
   `;
-  menu.style.top = e.clientY + 'px';
-  menu.style.left = e.clientX + 'px';
+  menu.style.cssText = `position:fixed;top:${e.clientY}px;left:${e.clientX}px;`;
   document.body.appendChild(menu);
   contextMenuEl = menu;
 
@@ -775,10 +774,15 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// Sync on page unload
-window.addEventListener('beforeunload', () => {
-  if (isDirty) syncToEngine();
+// Warn on unsaved changes
+window.addEventListener('beforeunload', (e) => {
+  if (isDirty) { e.preventDefault(); e.returnValue = ''; }
 });
 
 renderRecentFiles();
-console.log('PageSmith v0.4 — browser-owns-DOM editor ready');
+console.log('PageSmith v0.4');
+
+// Expose functions for macOS menu bar callbacks
+window.__pageSmithOpenFile = openFile;
+window.__pageSmithSaveFile = saveFile;
+window.__pageSmithToggleSource = () => switchMode(editMode === 'visual' ? 'source' : 'visual');

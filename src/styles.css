@@ -62,6 +62,8 @@ body {
   border: none;
   border-radius: 6px;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .primary-btn:hover {
@@ -173,6 +175,9 @@ body {
   cursor: pointer;
   color: var(--text-primary);
   height: 28px;
+  -webkit-appearance: none;
+  appearance: none;
+  flex-shrink: 0;
 }
 
 .toolbar-item:hover {
@@ -202,6 +207,8 @@ body {
   justify-content: center;
   color: var(--text-primary);
   flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .toolbar-btn.icon-btn {
@@ -247,6 +254,13 @@ body {
   outline: none;
   font-size: 14px;
   line-height: 1.6;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+#visual-editor:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
 }
 
 #visual-editor:empty::before {
@@ -303,6 +317,13 @@ body {
   font-family: var(--font-family);
   border-radius: 4px;
   cursor: pointer;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+#link-popover button:hover {
+  background: #e8e8ed;
 }
 
 /* Table editing */
@@ -341,6 +362,8 @@ th.editing {
   background: none;
   border: none;
   color: var(--text-primary);
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .context-menu-item:hover {
