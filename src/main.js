@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 // ── State ──
 
@@ -123,34 +124,24 @@ document.addEventListener('compositionend', () => {
 // ── Text editing: browser owns DOM, engine synced in background ──
 
 // Interactive elements: normal click = edit mode, Cmd+click = actual action.
-// Both mousedown AND click must be intercepted because browsers navigate
-// links on mousedown, and contenteditable has its own click handling.
 visualEditor.addEventListener('mousedown', (e) => {
   const interactive = e.target.closest('a, button, input:not([type=text]), select, textarea, [onclick]');
-  if (!interactive) return;
-
-  if (e.metaKey || e.ctrlKey) {
-    // Cmd+click: let the browser handle the action natively
-    return;
-  }
-  // Normal click: block default (navigation, form submit, etc.)
+  if (!interactive || e.metaKey || e.ctrlKey) return;
   e.preventDefault();
 });
 
-visualEditor.addEventListener('click', (e) => {
+visualEditor.addEventListener('click', async (e) => {
   const interactive = e.target.closest('a, button, input:not([type=text]), select, textarea, details, summary, [onclick]');
   if (!interactive) return;
 
   if (e.metaKey || e.ctrlKey) {
-    // Cmd+click on link: manually open in default browser
     if (interactive.tagName === 'A' && interactive.href) {
       e.preventDefault();
-      window.open(interactive.href, '_blank');
+      e.stopPropagation();
+      await openUrl(interactive.href);
     }
     return;
   }
-
-  // Normal click: prevent action, stay in edit mode
   e.preventDefault();
 });
 
@@ -761,6 +752,12 @@ async function renderRecentFiles() {
 // ── Init ──
 
 openBtn.addEventListener('click', openFile);
+
+// Toolbar Open button (visible when a file is open)
+const toolbarOpenBtn = document.getElementById('toolbar-open-btn');
+if (toolbarOpenBtn) {
+  toolbarOpenBtn.addEventListener('click', openFile);
+}
 
 function showEditor() {
   emptyState.classList.add('hidden');

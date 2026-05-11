@@ -156,6 +156,11 @@ body {
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   overflow-x: auto;
+  position: relative;
+  z-index: 10;
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .toolbar-item {
