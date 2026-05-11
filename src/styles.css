@@ -13,7 +13,7 @@
   --border-color: #d2d2d7;
   --accent-color: #0071e3;
   --accent-hover: #0077ed;
-  --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-family: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
   --font-mono: "SF Mono", "Menlo", "Monaco", "Courier New", monospace;
 }
 
@@ -199,6 +199,16 @@ body {
   flex-shrink: 0;
 }
 
+.toolbar-btn.icon-btn {
+  width: 30px;
+  height: 30px;
+}
+
+.toolbar-btn.icon-btn .material-symbols-outlined {
+  font-size: 20px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
 .toolbar-btn:hover {
   background: var(--bg-secondary);
   border-color: var(--border-color);
@@ -213,23 +223,12 @@ body {
 .toolbar-btn:disabled {
   opacity: 0.35;
   cursor: default;
+  pointer-events: none;
 }
 
 .toolbar-btn:disabled:hover {
   background: transparent;
   border-color: transparent;
-}
-
-.toolbar-btn.italic {
-  font-style: italic;
-}
-
-.toolbar-btn.underline {
-  text-decoration: underline;
-}
-
-.toolbar-btn.strikethrough {
-  text-decoration: line-through;
 }
 
 /* Editor Area */

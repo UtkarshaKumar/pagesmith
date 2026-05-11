@@ -125,8 +125,13 @@ document.addEventListener('compositionend', () => {
 // WKWebView Sequoia fix: TSM (macOS Text Services Manager) can misroute
 // text insertion in flex scroll containers. beforeinput fires with correct
 // selection before TSM corrupts the insertion point.
-// Only intercepts insertText — Enter/Backspace/Delete/Tab have their own inputTypes.
 visualEditor.addEventListener('beforeinput', (e) => {
+  // Block contenteditable auto-formatting (1. -> ordered list, * -> bullet)
+  if (e.inputType === 'insertOrderedList' || e.inputType === 'insertUnorderedList') {
+    e.preventDefault();
+    return;
+  }
+
   if (e.inputType !== 'insertText' || e.data === null || composing) return;
   e.preventDefault();
   const sel = window.getSelection();
@@ -321,6 +326,85 @@ function updateAlignButtons(active) {
   if (active === 'center') alignCenterBtn.classList.add('active');
   if (active === 'right') alignRightBtn.classList.add('active');
 }
+
+// ── Image Insert ──
+
+const imageBtn = document.getElementById('image-btn');
+
+imageBtn.addEventListener('click', async () => {
+  try {
+    const selected = await open({
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
+      multiple: false,
+    });
+    if (!selected) return;
+
+    const filename = selected.split('/').pop();
+    const imgHTML = `<img src="${filename}" alt="Image" />`;
+
+    // Insert at cursor
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const temp = document.createElement('div');
+      temp.innerHTML = imgHTML;
+      const img = temp.firstChild;
+      range.insertNode(img);
+      range.setStartAfter(img);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } else {
+      visualEditor.innerHTML += imgHTML;
+    }
+    isDirty = true;
+    updateTitle();
+    debouncedSync();
+  } catch (err) { console.error('Image insert failed:', err); }
+});
+
+// ── Table Insert ──
+
+const tableBtn = document.getElementById('table-btn');
+
+tableBtn.addEventListener('click', () => {
+  const rows = prompt('Number of rows:', '3');
+  const cols = prompt('Number of columns:', '3');
+  if (!rows || !cols) return;
+
+  const r = parseInt(rows) || 3;
+  const c = parseInt(cols) || 3;
+  let html = '<table>';
+  for (let i = 0; i < r; i++) {
+    html += '<tr>';
+    for (let j = 0; j < c; j++) {
+      html += i === 0 ? '<th></th>' : '<td></td>';
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    const table = temp.firstChild;
+    range.insertNode(table);
+    range.setStart(table.querySelector('th, td') || table, 0);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } else {
+    visualEditor.innerHTML += html;
+  }
+  addTableGuideBorders();
+  isDirty = true;
+  updateTitle();
+  debouncedSync();
+});
 
 // ── Undo/Redo via Engine ──
 

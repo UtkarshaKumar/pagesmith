@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PageSmith</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -79,29 +82,30 @@
         <div class="toolbar-separator"></div>
 
         <!-- Text formatting -->
-        <button id="bold-btn" class="toolbar-btn" title="Bold (⌘B)">B</button>
-        <button id="italic-btn" class="toolbar-btn italic" title="Italic (⌘I)">I</button>
-        <button id="underline-btn" class="toolbar-btn underline" title="Underline (⌘U)">U</button>
-        <button id="strike-btn" class="toolbar-btn strikethrough" title="Strikethrough">S</button>
+        <button id="bold-btn" class="toolbar-btn icon-btn" title="Bold (⌘B)"><span class="material-symbols-outlined">format_bold</span></button>
+        <button id="italic-btn" class="toolbar-btn icon-btn" title="Italic (⌘I)"><span class="material-symbols-outlined">format_italic</span></button>
+        <button id="underline-btn" class="toolbar-btn icon-btn" title="Underline (⌘U)"><span class="material-symbols-outlined">format_underlined</span></button>
+        <button id="strike-btn" class="toolbar-btn icon-btn" title="Strikethrough"><span class="material-symbols-outlined">strikethrough_s</span></button>
 
         <div class="toolbar-separator"></div>
 
         <!-- Lists -->
-        <button id="ul-btn" class="toolbar-btn" title="Bullet List">•</button>
-        <button id="ol-btn" class="toolbar-btn" title="Numbered List">1.</button>
+        <button id="ul-btn" class="toolbar-btn icon-btn" title="Bullet List"><span class="material-symbols-outlined">format_list_bulleted</span></button>
+        <button id="ol-btn" class="toolbar-btn icon-btn" title="Numbered List"><span class="material-symbols-outlined">format_list_numbered</span></button>
 
         <div class="toolbar-separator"></div>
 
         <!-- Alignment -->
-        <button id="align-left-btn" class="toolbar-btn active" title="Align Left">⫷</button>
-        <button id="align-center-btn" class="toolbar-btn" title="Align Center">≣</button>
-        <button id="align-right-btn" class="toolbar-btn" title="Align Right">⫸</button>
+        <button id="align-left-btn" class="toolbar-btn icon-btn active" title="Align Left"><span class="material-symbols-outlined">format_align_left</span></button>
+        <button id="align-center-btn" class="toolbar-btn icon-btn" title="Align Center"><span class="material-symbols-outlined">format_align_center</span></button>
+        <button id="align-right-btn" class="toolbar-btn icon-btn" title="Align Right"><span class="material-symbols-outlined">format_align_right</span></button>
 
         <div class="toolbar-separator"></div>
 
-        <!-- Link & Image -->
-        <button id="link-btn" class="toolbar-btn" title="Insert Link (⌘K)">🔗</button>
-        <button id="image-btn" class="toolbar-btn" title="Insert Image">🖼</button>
+        <!-- Insert -->
+        <button id="link-btn" class="toolbar-btn icon-btn" title="Insert Link (⌘K)"><span class="material-symbols-outlined">link</span></button>
+        <button id="image-btn" class="toolbar-btn icon-btn" title="Insert Image"><span class="material-symbols-outlined">image</span></button>
+        <button id="table-btn" class="toolbar-btn icon-btn" title="Insert Table"><span class="material-symbols-outlined">table</span></button>
       </div>
 
       <!-- Visual editing area -->
