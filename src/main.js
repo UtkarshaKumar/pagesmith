@@ -135,7 +135,7 @@ async function applySurgicalEdit(oldText, newText, cursorOffset, deleteLength) {
     let byteOffset = 0;
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
-      byteOffset = getTextOffsetBefore(range);
+      byteOffset = getByteOffsetInSource(range);
     }
 
     // Apply the patch through the engine
@@ -157,24 +157,36 @@ async function applySurgicalEdit(oldText, newText, cursorOffset, deleteLength) {
   }
 }
 
-// Estimate byte offset by counting text before a DOM range
-function getTextOffsetBefore(range) {
+// Estimate byte offset by counting innerHTML bytes before a DOM range.
+// This includes HTML tags, which is necessary because the source buffer
+// is raw HTML, not just text content.
+function getByteOffsetInSource(range) {
   const pre = document.createRange();
   pre.selectNodeContents(visualEditor);
   pre.setEnd(range.startContainer, range.startOffset);
-  return pre.toString().length;
+
+  // Get the HTML fragment before the cursor
+  const fragment = pre.cloneContents();
+  const temp = document.createElement('div');
+  temp.appendChild(fragment);
+  const htmlBefore = temp.innerHTML;
+
+  // Count the bytes of the HTML before the cursor
+  // This gives us an approximate byte offset in the source buffer
+  // For simple HTML, this matches 1:1 with the source
+  return htmlBefore.length;
 }
 
-// Re-render but restore cursor to the saved offset
-function renderHTMLKeepCursor(html, offset) {
+// Re-render but restore cursor to the saved offset in text content
+function renderHTMLKeepCursor(html, textOffset) {
   visualEditor.innerHTML = html;
   addTableGuideBorders();
   visualEditor.querySelectorAll('script').forEach(s => s.remove());
 
-  // Restore cursor at offset
+  // Restore cursor at text offset
   try {
     const sel = window.getSelection();
-    const range = setCursorAtTextOffset(visualEditor, offset);
+    const range = setCursorAtTextOffset(visualEditor, textOffset);
     if (range) {
       sel.removeAllRanges();
       sel.addRange(range);
@@ -209,7 +221,7 @@ async function wrapSelection(tag, attrStr = '') {
   const selectedText = sel.toString();
   if (!selectedText) return;
 
-  const startOffset = getTextOffsetBefore(sel.getRangeAt(0));
+  const startOffset = getByteOffsetInSource(sel.getRangeAt(0));
   const openTag = attrStr ? `<${tag} ${attrStr}>` : `<${tag}>`;
   const closeTag = `</${tag}>`;
   const replacement = openTag + selectedText + closeTag;
@@ -239,7 +251,7 @@ ulBtn.addEventListener('click', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const offset = getByteOffsetInSource(sel.getRangeAt(0));
   const replacement = '<ul><li>' + text + '</li></ul>';
   const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
   lastRenderedHTML = newHTML;
@@ -252,7 +264,7 @@ olBtn.addEventListener('click', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const offset = getByteOffsetInSource(sel.getRangeAt(0));
   const replacement = '<ol><li>' + text + '</li></ol>';
   const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
   lastRenderedHTML = newHTML;
@@ -268,7 +280,7 @@ formatSelect.addEventListener('change', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString() || ' ';
-  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const offset = getByteOffsetInSource(sel.getRangeAt(0));
   const replacement = `<${tag}>${text}</${tag}>`;
   const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
   lastRenderedHTML = newHTML;
@@ -285,7 +297,7 @@ fontSelect.addEventListener('change', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const offset = getByteOffsetInSource(sel.getRangeAt(0));
   const replacement = `<span style="font-family:${font}">${text}</span>`;
   const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
   lastRenderedHTML = newHTML;
@@ -301,7 +313,7 @@ fontSizeSelect.addEventListener('change', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const offset = getByteOffsetInSource(sel.getRangeAt(0));
   const replacement = `<span style="font-size:${size}">${text}</span>`;
   const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
   lastRenderedHTML = newHTML;
@@ -314,7 +326,7 @@ async function applyAlignment(align) {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getTextOffsetBefore(sel.getRangeAt(0));
+  const offset = getByteOffsetInSource(sel.getRangeAt(0));
   const replacement = `<div style="text-align:${align}">${text}</div>`;
   const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
   lastRenderedHTML = newHTML;
@@ -338,52 +350,48 @@ function updateAlignButtons(active) {
 // ── contenteditable input → surgical patch ──
 
 // Track state before each input for diff computation
-let beforeInputText = '';
-let beforeInputOffset = 0;
+let beforeInputHTML = '';
 
 visualEditor.addEventListener('keydown', (e) => {
-  // Capture state before the edit
-  const sel = window.getSelection();
-  if (sel && sel.rangeCount > 0) {
-    beforeInputOffset = getTextOffsetBefore(sel.getRangeAt(0));
-  }
-  beforeInputText = visualEditor.textContent || '';
+  // Capture innerHTML before the edit
+  beforeInputHTML = visualEditor.innerHTML;
 });
 
 visualEditor.addEventListener('input', async (e) => {
   e.preventDefault();
-  const afterText = visualEditor.textContent || '';
-  const beforeText = beforeInputText;
+  const afterHTML = visualEditor.innerHTML;
+  const beforeHTML = beforeInputHTML;
 
-  if (beforeText === afterText) return;
+  if (beforeHTML === afterHTML) return;
 
-  // Compute what changed
-  // Find the first differing character
-  let diffStart = 0;
-  while (diffStart < beforeText.length && diffStart < afterText.length
-    && beforeText[diffStart] === afterText[diffStart]) {
-    diffStart++;
-  }
-
-  // Find the end of the difference
-  let beforeEnd = beforeText.length;
-  let afterEnd = afterText.length;
-  while (beforeEnd > diffStart && afterEnd > diffStart
-    && beforeText[beforeEnd - 1] === afterText[afterEnd - 1]) {
-    beforeEnd--;
-    afterEnd--;
-  }
-
-  const deleted = beforeText.slice(diffStart, beforeEnd);
-  const inserted = afterText.slice(diffStart, afterEnd);
-
-  // Estimate byte offset in source
-  const byteOffset = beforeInputOffset + diffStart;
-
-  // Restore the DOM from engine before applying patch
+  // Restore the visual editor to engine state (undo contenteditable's changes)
   visualEditor.innerHTML = lastRenderedHTML;
   addTableGuideBorders();
   visualEditor.querySelectorAll('script').forEach(s => s.remove());
+
+  // Find the edit by comparing before/after innerHTML
+  // Find common prefix
+  let prefixEnd = 0;
+  while (prefixEnd < beforeHTML.length && prefixEnd < afterHTML.length
+    && beforeHTML[prefixEnd] === afterHTML[prefixEnd]) {
+    prefixEnd++;
+  }
+
+  // Find common suffix
+  let suffixStartBefore = beforeHTML.length;
+  let suffixStartAfter = afterHTML.length;
+  while (suffixStartBefore > prefixEnd && suffixStartAfter > prefixEnd
+    && beforeHTML[suffixStartBefore - 1] === afterHTML[suffixStartAfter - 1]) {
+    suffixStartBefore--;
+    suffixStartAfter--;
+  }
+
+  const deleted = beforeHTML.slice(prefixEnd, suffixStartBefore);
+  const inserted = afterHTML.slice(prefixEnd, suffixStartAfter);
+
+  // The byte offset in the source = prefix length (approximately)
+  // This works because visualEditor.innerHTML should match the body content of the source
+  const byteOffset = prefixEnd;
 
   // Apply surgical patch
   try {
@@ -396,15 +404,17 @@ visualEditor.addEventListener('input', async (e) => {
     isDirty = true;
     updateTitle();
 
-    // Re-render and restore cursor
-    const newCursorOffset = byteOffset + inserted.length;
-    renderHTMLKeepCursor(newHTML, newCursorOffset);
+    // Re-render and try to restore cursor
+    visualEditor.innerHTML = newHTML;
+    addTableGuideBorders();
+    visualEditor.querySelectorAll('script').forEach(s => s.remove());
   } catch (err) {
-    console.error('Input patch failed:', err);
-    // Fallback: reload from engine
+    console.error('Input patch failed, reloading from engine:', err);
+    // Fallback: full reload from engine
     try {
       const html = await invoke('get_current_html');
-      renderHTMLKeepCursor(html, byteOffset);
+      lastRenderedHTML = html;
+      renderHTML(html);
     } catch (e2) { /* give up */ }
   }
 });
@@ -608,7 +618,7 @@ linkBtn.addEventListener('click', () => {
   if (!sel.rangeCount) return;
   const selectedText = sel.toString();
   if (!selectedText) return;
-  showLinkPopover(selectedText, getTextOffsetBefore(sel.getRangeAt(0)));
+  showLinkPopover(selectedText, getByteOffsetInSource(sel.getRangeAt(0)));
 });
 
 function showLinkPopover(selectedText, offset) {

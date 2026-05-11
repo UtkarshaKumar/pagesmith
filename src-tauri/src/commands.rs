@@ -98,6 +98,17 @@ pub fn apply_patch(
     let mut model = state.model.lock().unwrap();
     let model = model.as_mut().ok_or("No file open")?;
 
+    let total_len = model.raw.len();
+
+    // Bounds checking: clamp offset and length to valid range
+    let offset = offset.min(total_len);
+    let max_len = total_len.saturating_sub(offset);
+    let length = length.min(max_len);
+
+    if offset > total_len {
+        return Err(format!("offset {} out of bounds (len {})", offset, total_len));
+    }
+
     let original_slice = model.raw[offset..offset + length].to_vec();
     let patch = Patch::new(offset, length, replacement.as_bytes().to_vec());
 
