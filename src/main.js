@@ -121,6 +121,25 @@ document.addEventListener('compositionend', () => {
 
 // ── Text editing: browser owns DOM, engine synced in background ──
 
+// WKWebView Sequoia fix: TSM (macOS Text Services Manager) can misroute
+// text insertion in flex scroll containers. beforeinput fires with correct
+// selection before TSM corrupts the insertion point.
+// Only intercepts insertText — Enter/Backspace/Delete/Tab have their own inputTypes.
+visualEditor.addEventListener('beforeinput', (e) => {
+  if (e.inputType !== 'insertText' || e.data === null || composing) return;
+  e.preventDefault();
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  range.deleteContents();
+  const text = document.createTextNode(e.data);
+  range.insertNode(text);
+  range.setStartAfter(text);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+});
+
 visualEditor.addEventListener('input', () => {
   if (composing) return;
   isDirty = true;
