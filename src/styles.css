@@ -240,8 +240,6 @@ body {
 }
 
 #visual-editor {
-  max-width: 800px;
-  margin: 0 auto;
   outline: none;
   font-size: 14px;
   line-height: 1.6;

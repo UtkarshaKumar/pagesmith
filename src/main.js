@@ -14,6 +14,7 @@ let isDirty = false;
 let editMode = 'visual';
 let composing = false; // IME composition guard
 let pendingSync = null; // Debounce timer for engine sync
+let zoomLevel = 100; // Zoom percent, step 10
 
 // ── DOM refs ──
 
@@ -347,6 +348,23 @@ document.addEventListener('keydown', async (e) => {
   else if (isMeta && e.key === 's') { e.preventDefault(); await saveFile(); }
   if (isMeta && e.shiftKey && e.key === 'v') { e.preventDefault(); switchMode(editMode === 'visual' ? 'source' : 'visual'); }
   if (isMeta && e.key === 'k') { e.preventDefault(); linkBtn.click(); }
+
+  // Zoom: Cmd+/Cmd-/Cmd+0
+  if (isMeta && (e.key === '=' || e.key === '+')) {
+    e.preventDefault();
+    zoomLevel = Math.min(zoomLevel + 10, 300);
+    document.documentElement.style.zoom = zoomLevel + '%';
+  }
+  if (isMeta && e.key === '-') {
+    e.preventDefault();
+    zoomLevel = Math.max(zoomLevel - 10, 50);
+    document.documentElement.style.zoom = zoomLevel + '%';
+  }
+  if (isMeta && e.key === '0') {
+    e.preventDefault();
+    zoomLevel = 100;
+    document.documentElement.style.zoom = '100%';
+  }
 });
 
 // ── Visual/Source Mode Toggle ──
