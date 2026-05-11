@@ -68,10 +68,7 @@ async function openFile() {
 async function saveFile() {
   if (!currentFilePath) return;
   try {
-    // Sync source mode changes before save
-    if (editMode === 'source') {
-      await invoke('set_source_content', { content: sourceTextarea.value });
-    }
+    // Engine is synced via replace_in_source on each edit
     await invoke('save_file');
     isDirty = false;
     updateTitle();
@@ -87,9 +84,6 @@ async function saveFileAs() {
     });
     if (!filePath) return;
 
-    if (editMode === 'source') {
-      await invoke('set_source_content', { content: sourceTextarea.value });
-    }
     await invoke('save_file_as', { path: filePath });
     currentFilePath = filePath;
     isDirty = false;
@@ -215,27 +209,26 @@ function setCursorAtTextOffset(node, targetOffset) {
 
 // Each format action computes the patch and sends to engine
 async function wrapSelection(tag, attrStr = '') {
-  const html = lastRenderedHTML;
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const selectedText = sel.toString();
   if (!selectedText) return;
 
-  const startOffset = getByteOffsetInSource(sel.getRangeAt(0));
   const openTag = attrStr ? `<${tag} ${attrStr}>` : `<${tag}>`;
   const closeTag = `</${tag}>`;
   const replacement = openTag + selectedText + closeTag;
 
   try {
-    const newHTML = await invoke('apply_patch', {
-      offset: startOffset,
-      length: selectedText.length,
-      replacement,
+    // Use search-based replacement — engine finds the text and replaces it
+    const result = await invoke('replace_in_source', {
+      offsetHint: 0,
+      oldText: selectedText,
+      newText: replacement,
     });
-    lastRenderedHTML = newHTML;
+    lastRenderedHTML = result.source;
     isDirty = true;
     updateTitle();
-    renderHTMLKeepCursor(newHTML, startOffset + replacement.length);
+    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
   } catch (err) {
     console.error('Format patch failed:', err);
   }
@@ -251,26 +244,30 @@ ulBtn.addEventListener('click', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getByteOffsetInSource(sel.getRangeAt(0));
+  if (!text) return;
   const replacement = '<ul><li>' + text + '</li></ul>';
-  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
-  lastRenderedHTML = newHTML;
-  isDirty = true;
-  updateTitle();
-  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  try {
+    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
+    lastRenderedHTML = result.source;
+    isDirty = true;
+    updateTitle();
+    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+  } catch (err) { console.error(err); }
 });
 
 olBtn.addEventListener('click', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getByteOffsetInSource(sel.getRangeAt(0));
+  if (!text) return;
   const replacement = '<ol><li>' + text + '</li></ol>';
-  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
-  lastRenderedHTML = newHTML;
-  isDirty = true;
-  updateTitle();
-  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  try {
+    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
+    lastRenderedHTML = result.source;
+    isDirty = true;
+    updateTitle();
+    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+  } catch (err) { console.error(err); }
 });
 
 // Paragraph format
@@ -280,14 +277,15 @@ formatSelect.addEventListener('change', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString() || ' ';
-  const offset = getByteOffsetInSource(sel.getRangeAt(0));
   const replacement = `<${tag}>${text}</${tag}>`;
-  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
-  lastRenderedHTML = newHTML;
-  isDirty = true;
-  updateTitle();
-  renderHTMLKeepCursor(newHTML, offset + replacement.length);
-  formatSelect.value = 'p'; // Reset
+  try {
+    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
+    lastRenderedHTML = result.source;
+    isDirty = true;
+    updateTitle();
+    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+  } catch (err) { console.error(err); }
+  formatSelect.value = 'p';
 });
 
 // Font
@@ -297,11 +295,13 @@ fontSelect.addEventListener('change', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getByteOffsetInSource(sel.getRangeAt(0));
+  if (!text) return;
   const replacement = `<span style="font-family:${font}">${text}</span>`;
-  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
-  lastRenderedHTML = newHTML;
-  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  try {
+    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
+    lastRenderedHTML = result.source;
+    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+  } catch (err) { console.error(err); }
   fontSelect.value = '';
 });
 
@@ -313,11 +313,13 @@ fontSizeSelect.addEventListener('change', async () => {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getByteOffsetInSource(sel.getRangeAt(0));
+  if (!text) return;
   const replacement = `<span style="font-size:${size}">${text}</span>`;
-  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
-  lastRenderedHTML = newHTML;
-  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  try {
+    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
+    lastRenderedHTML = result.source;
+    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+  } catch (err) { console.error(err); }
   fontSizeSelect.value = '';
 });
 
@@ -326,13 +328,15 @@ async function applyAlignment(align) {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const text = sel.toString();
-  const offset = getByteOffsetInSource(sel.getRangeAt(0));
+  if (!text) return;
   const replacement = `<div style="text-align:${align}">${text}</div>`;
-  const newHTML = await invoke('apply_patch', { offset, length: text.length, replacement });
-  lastRenderedHTML = newHTML;
-  isDirty = true;
-  updateTitle();
-  renderHTMLKeepCursor(newHTML, offset + replacement.length);
+  try {
+    const result = await invoke('replace_in_source', { offsetHint: 0, oldText: text, newText: replacement });
+    lastRenderedHTML = result.source;
+    isDirty = true;
+    updateTitle();
+    renderHTMLKeepCursor(result.source, result.offset + replacement.length);
+  } catch (err) { console.error(err); }
   updateAlignButtons(align);
 }
 
@@ -347,70 +351,65 @@ function updateAlignButtons(active) {
   if (active === 'right') alignRightBtn.classList.add('active');
 }
 
-// ── contenteditable input → surgical patch ──
+// ── contenteditable input → search-based surgical patch ──
 
-// Track state before each input for diff computation
 let beforeInputHTML = '';
 
-visualEditor.addEventListener('keydown', (e) => {
-  // Capture innerHTML before the edit
+visualEditor.addEventListener('keydown', () => {
+  // Snapshot before the edit
   beforeInputHTML = visualEditor.innerHTML;
 });
 
-visualEditor.addEventListener('input', async (e) => {
-  e.preventDefault();
+visualEditor.addEventListener('input', async () => {
   const afterHTML = visualEditor.innerHTML;
   const beforeHTML = beforeInputHTML;
 
   if (beforeHTML === afterHTML) return;
 
-  // Restore the visual editor to engine state (undo contenteditable's changes)
-  visualEditor.innerHTML = lastRenderedHTML;
-  addTableGuideBorders();
-  visualEditor.querySelectorAll('script').forEach(s => s.remove());
-
-  // Find the edit by comparing before/after innerHTML
-  // Find common prefix
-  let prefixEnd = 0;
-  while (prefixEnd < beforeHTML.length && prefixEnd < afterHTML.length
-    && beforeHTML[prefixEnd] === afterHTML[prefixEnd]) {
-    prefixEnd++;
+  // Find the exact change region by comparing before/after innerHTML
+  // Find common prefix (bytes that didn't change at the start)
+  let prefixLen = 0;
+  while (prefixLen < beforeHTML.length && prefixLen < afterHTML.length
+    && beforeHTML[prefixLen] === afterHTML[prefixLen]) {
+    prefixLen++;
   }
 
-  // Find common suffix
+  // Find common suffix (bytes that didn't change at the end)
   let suffixStartBefore = beforeHTML.length;
   let suffixStartAfter = afterHTML.length;
-  while (suffixStartBefore > prefixEnd && suffixStartAfter > prefixEnd
+  while (suffixStartBefore > prefixLen && suffixStartAfter > prefixLen
     && beforeHTML[suffixStartBefore - 1] === afterHTML[suffixStartAfter - 1]) {
     suffixStartBefore--;
     suffixStartAfter--;
   }
 
-  const deleted = beforeHTML.slice(prefixEnd, suffixStartBefore);
-  const inserted = afterHTML.slice(prefixEnd, suffixStartAfter);
+  const oldText = beforeHTML.slice(prefixLen, suffixStartBefore);
+  const newText = afterHTML.slice(prefixLen, suffixStartAfter);
 
-  // The byte offset in the source = prefix length (approximately)
-  // This works because visualEditor.innerHTML should match the body content of the source
-  const byteOffset = prefixEnd;
-
-  // Apply surgical patch
+  // Ask the engine to find and replace this text in the source buffer
   try {
-    const newHTML = await invoke('apply_patch', {
-      offset: byteOffset,
-      length: deleted.length,
-      replacement: inserted,
+    const result = await invoke('replace_in_source', {
+      offsetHint: prefixLen,
+      oldText: oldText,
+      newText: newText,
     });
-    lastRenderedHTML = newHTML;
+
+    const newSource = result.source;
+    lastRenderedHTML = newSource;
     isDirty = true;
     updateTitle();
 
-    // Re-render and try to restore cursor
-    visualEditor.innerHTML = newHTML;
+    // Re-render and restore cursor
+    const cursorOffset = result.offset + result.new_length;
+    visualEditor.innerHTML = newSource;
     addTableGuideBorders();
     visualEditor.querySelectorAll('script').forEach(s => s.remove());
+
+    // Restore cursor position
+    restoreCursorAtByteOffset(cursorOffset);
   } catch (err) {
-    console.error('Input patch failed, reloading from engine:', err);
-    // Fallback: full reload from engine
+    console.error('replace_in_source failed:', err);
+    // Fallback: reload from engine
     try {
       const html = await invoke('get_current_html');
       lastRenderedHTML = html;
@@ -418,6 +417,68 @@ visualEditor.addEventListener('input', async (e) => {
     } catch (e2) { /* give up */ }
   }
 });
+
+// Restore cursor after re-render by counting bytes in innerHTML
+function restoreCursorAtByteOffset(targetOffset) {
+  try {
+    const html = visualEditor.innerHTML;
+    const sel = window.getSelection();
+
+    // Walk the DOM tree to find the text position at the given byte offset
+    const range = document.createRange();
+    const found = setRangeAtByteOffset(visualEditor, targetOffset);
+    if (found) {
+      sel.removeAllRanges();
+      sel.addRange(found);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// Set a DOM Range at a specific byte offset in the innerHTML
+function setRangeAtByteOffset(root, targetOffset) {
+  let byteCount = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ALL, null);
+  let node;
+
+  while ((node = walker.nextNode())) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent;
+      const len = text.length;
+      if (byteCount + len >= targetOffset) {
+        const range = document.createRange();
+        range.setStart(node, targetOffset - byteCount);
+        range.collapse(true);
+        return range;
+      }
+      byteCount += len;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      // Count the element's outerHTML bytes up to its children
+      const tagName = node.tagName?.toLowerCase() || '';
+      if (tagName) {
+        // Opening tag: <tagname>
+        byteCount += tagName.length + 2; // '<' + tagname + '>'
+
+        // Count attributes
+        if (node.attributes) {
+          for (const attr of node.attributes) {
+            byteCount += 1 + attr.name.length + 2 + attr.value.length + 1; // ' name="value"'
+          }
+        }
+
+        // Self-closing check
+        const voidElements = ['br','hr','img','input','meta','link','area','base','col','embed','source','track','wbr'];
+        if (voidElements.includes(tagName)) {
+          // Already counted the full tag
+          continue;
+        }
+      }
+    } else if (node.nodeType === Node.COMMENT_NODE) {
+      byteCount += node.textContent.length + 7; // <!-- --> (7 extra chars)
+    }
+  }
+
+  return null;
+}
 
 // ── Undo/Redo via Engine ──
 
@@ -618,10 +679,10 @@ linkBtn.addEventListener('click', () => {
   if (!sel.rangeCount) return;
   const selectedText = sel.toString();
   if (!selectedText) return;
-  showLinkPopover(selectedText, getByteOffsetInSource(sel.getRangeAt(0)));
+  showLinkPopover(selectedText);
 });
 
-function showLinkPopover(selectedText, offset) {
+function showLinkPopover(selectedText) {
   removeLinkPopover();
   const popover = document.createElement('div');
   popover.id = 'link-popover';
@@ -654,15 +715,15 @@ function showLinkPopover(selectedText, offset) {
     const targetAttr = newTab ? ' target="_blank"' : '';
     const replacement = `<a href="${url}"${targetAttr}>${text}</a>`;
     try {
-      const newHTML = await invoke('apply_patch', {
-        offset,
-        length: selectedText.length,
-        replacement,
+      const result = await invoke('replace_in_source', {
+        offsetHint: 0,
+        oldText: selectedText,
+        newText: replacement,
       });
-      lastRenderedHTML = newHTML;
+      lastRenderedHTML = result.source;
       isDirty = true;
       updateTitle();
-      renderHTML(newHTML);
+      renderHTML(result.source);
     } catch (err) { console.error('Link patch failed:', err); }
     removeLinkPopover();
   });

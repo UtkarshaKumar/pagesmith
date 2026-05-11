@@ -212,3 +212,55 @@ pub fn set_source_content(state: State<AppState>, content: String) -> Result<(),
     model.is_dirty = true;
     Ok(())
 }
+
+#[tauri::command]
+pub fn replace_in_source(
+    state: State<AppState>,
+    offset_hint: usize,
+    old_text: String,
+    new_text: String,
+) -> Result<serde_json::Value, String> {
+    let mut model = state.model.lock().unwrap();
+    let model = model.as_mut().ok_or("No file open")?;
+
+    let source_str = model.as_str().map_err(|e| e.to_string())?;
+
+    // Search for old_text starting from offset_hint, then expanding outward
+    let actual_offset = find_text(source_str, &old_text, offset_hint)
+        .ok_or_else(|| format!("Could not find '{}' in source near offset {}", old_text, offset_hint))?;
+
+    let patch = Patch::new(actual_offset, old_text.len(), new_text.as_bytes().to_vec());
+    let original_slice = model.raw[actual_offset..actual_offset + old_text.len()].to_vec();
+    patch.apply(model).map_err(|e| e.to_string())?;
+
+    state.undo_stack.lock().unwrap().record(patch, original_slice);
+
+    let new_source = model.as_str().map_err(|e| e.to_string())?.to_string();
+
+    Ok(serde_json::json!({
+        "source": new_source,
+        "offset": actual_offset,
+        "new_length": new_text.len(),
+    }))
+}
+
+/// Find `needle` in `haystack` starting from `hint` offset, expanding outward.
+fn find_text(haystack: &str, needle: &str, hint: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(hint.min(haystack.len()));
+    }
+
+    let hint = hint.min(haystack.len());
+
+    // Search forward from hint
+    if let Some(pos) = haystack[hint..].find(needle) {
+        return Some(hint + pos);
+    }
+
+    // Search backward from hint
+    if let Some(pos) = haystack[..hint].rfind(needle) {
+        return Some(pos);
+    }
+
+    None
+}
