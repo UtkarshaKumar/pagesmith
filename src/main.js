@@ -2,8 +2,8 @@
 // Every edit goes through invoke('apply_patch', ...) to the Rust engine.
 // Constitution E1: Source buffer is truth. DOM is derived view.
 
-const { invoke } = window.__TAURI__?.core || {};
-const { open, save } = window.__TAURI__?.plugin?.dialog || {};
+import { invoke } from '@tauri-apps/api/core';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
 // ── State ──
 
