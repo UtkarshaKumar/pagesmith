@@ -46,6 +46,13 @@ The "open a file, edit visually, save it back" desktop app died with BlueGriffon
 
 Apple Silicon only for now (`aarch64`). Intel build coming.
 
+> **Already installed and seeing "PageSmith is damaged and can't be opened"?**
+> Open Terminal and run this one line — it will fix the existing install:
+>
+> ```bash
+> xattr -cr /Applications/PageSmith.app && open /Applications/PageSmith.app
+> ```
+
 ### Option 1 — One-line install (recommended)
 
 This downloads via `curl` (which doesn't set the macOS quarantine flag that confuses Gatekeeper), copies the app to `/Applications`, and launches it:
