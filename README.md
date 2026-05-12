@@ -2,9 +2,10 @@
 
 > Edit HTML. Visually. Finally.
 
-**Created:** 2026-05-11
-**Status:** Active
+![PageSmith — visual HTML editor for macOS](src/assets/screenshot.png)
+
 **Platform:** Mac (Tauri 2), with optional web trial for Chromium users
+**Latest release:** [v0.4.3](https://github.com/UtkarshaKumar/pagesmith/releases/latest)
 
 ## Overview
 
