@@ -48,11 +48,30 @@ Download the latest DMG from the [Releases](https://github.com/UtkarshaKumar/pag
 
 1. Open `PageSmith_*.dmg`
 2. Drag `PageSmith.app` into `/Applications`
-3. Launch from Applications or Spotlight
-
-> **Note:** The app is not yet notarized. On first launch, right-click the app icon and choose **Open** to bypass Gatekeeper.
+3. **Right-click** the app icon and choose **Open** — then click **Open** in the dialog
+4. From the second launch onward, double-clicking works normally
 
 Apple Silicon only for now (`aarch64`). Intel build coming.
+
+### Troubleshooting "PageSmith is damaged" or "cannot be opened"
+
+The app is ad-hoc signed but not Apple-notarized (no $99/yr Developer Program), so macOS Gatekeeper will resist the first launch. Two ways to get past it:
+
+**Option A — strip the quarantine flag (one command):**
+
+```bash
+xattr -cr /Applications/PageSmith.app
+```
+
+Then double-click as normal.
+
+**Option B — Privacy & Security panel:**
+
+After the failed launch attempt, open **System Settings → Privacy & Security**, scroll to the bottom, and click **"Open Anyway"** next to the PageSmith entry.
+
+### Managed / corporate Macs
+
+If your Mac is managed by your employer (MDM), even unblocking the app yourself may not be enough — the policy can block any application that isn't on the IT allowlist. Ask your IT team to allow the bundle identifier `com.pagesmith.app`.
 
 ## Keyboard shortcuts
 

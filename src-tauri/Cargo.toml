@@ -1,6 +1,6 @@
 [package]
 name = "pagesmith"
-version = "0.1.0"
+version = "0.4.4"
 description = "PageSmith — Microsoft Word for HTML files"
 authors = ["Utkarsh Kumar"]
 edition = "2021"

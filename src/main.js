@@ -997,7 +997,7 @@ function escapeHtml(str) {
 }
 
 renderRecentFiles();
-console.log('PageSmith v0.4.3 — block ops + dark-mode color fixes');
+console.log('PageSmith v0.4.4 — ad-hoc signing + version sync');
 
 // Theme toggle (auto → dark → light → auto)
 const themeBtn = document.getElementById('theme-btn');

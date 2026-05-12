@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "pagesmith"
-version = "0.1.0"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "encoding_rs",
