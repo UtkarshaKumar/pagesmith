@@ -44,34 +44,37 @@ The "open a file, edit visually, save it back" desktop app died with BlueGriffon
 
 ## Install
 
-Download the latest DMG from the [Releases](https://github.com/UtkarshaKumar/pagesmith/releases/latest) page:
-
-1. Open `PageSmith_*.dmg`
-2. Drag `PageSmith.app` into `/Applications`
-3. **Right-click** the app icon and choose **Open** — then click **Open** in the dialog
-4. From the second launch onward, double-clicking works normally
-
 Apple Silicon only for now (`aarch64`). Intel build coming.
 
-### Troubleshooting "PageSmith is damaged" or "cannot be opened"
+### Option 1 — One-line install (recommended)
 
-The app is ad-hoc signed but not Apple-notarized (no $99/yr Developer Program), so macOS Gatekeeper will resist the first launch. Two ways to get past it:
-
-**Option A — strip the quarantine flag (one command):**
+This downloads via `curl` (which doesn't set the macOS quarantine flag that confuses Gatekeeper), copies the app to `/Applications`, and launches it:
 
 ```bash
-xattr -cr /Applications/PageSmith.app
+curl -sSL https://raw.githubusercontent.com/UtkarshaKumar/pagesmith/main/install.sh | bash
 ```
 
-Then double-click as normal.
+### Option 2 — Manual install from the DMG
 
-**Option B — Privacy & Security panel:**
+1. Download the DMG from the [Releases](https://github.com/UtkarshaKumar/pagesmith/releases/latest) page
+2. Open the DMG and drag `PageSmith.app` into `/Applications`
+3. Open Terminal and run:
 
-After the failed launch attempt, open **System Settings → Privacy & Security**, scroll to the bottom, and click **"Open Anyway"** next to the PageSmith entry.
+   ```bash
+   xattr -cr /Applications/PageSmith.app && open /Applications/PageSmith.app
+   ```
+
+   That step is necessary because browsers (Safari/Chrome) tag downloads with a `com.apple.quarantine` extended attribute, and macOS Gatekeeper falsely reports unsigned apps with that attribute as "damaged."
+
+### Why the extra step
+
+The app is ad-hoc code-signed but not yet Apple-notarized (notarization requires a $99/year Apple Developer account, on the roadmap). On macOS Sequoia and later, Gatekeeper will refuse to launch any non-notarized app downloaded through a browser and falsely report it as "damaged." The `xattr -cr` command strips the quarantine flag and lets the app launch.
+
+If you used the one-line installer above, you don't need to do this — `curl` doesn't set the quarantine flag in the first place.
 
 ### Managed / corporate Macs
 
-If your Mac is managed by your employer (MDM), even unblocking the app yourself may not be enough — the policy can block any application that isn't on the IT allowlist. Ask your IT team to allow the bundle identifier `com.pagesmith.app`.
+If your Mac is managed by your employer (MDM), even stripping quarantine yourself may not be enough — corporate policy can block any application not on the IT allowlist. Ask your IT team to allow bundle identifier `com.pagesmith.app`.
 
 ## Keyboard shortcuts
 
