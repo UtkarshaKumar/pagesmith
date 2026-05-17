@@ -385,6 +385,93 @@ th.editing {
   outline-offset: -2px;
 }
 
+/* Image resize handles, toolbar, preview */
+.resize-handle {
+  display: block;
+}
+
+.resize-preview {
+  display: block;
+}
+
+#image-toolbar {
+  font-family: var(--font-family);
+  font-size: 12px;
+}
+
+.image-toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.image-toolbar-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.image-toolbar-input {
+  width: 52px;
+  padding: 3px 4px;
+  font-size: 12px;
+  font-family: var(--font-family);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.image-toolbar-input:focus {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -1px;
+}
+
+.image-toolbar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
+.image-toolbar-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-family: var(--font-family);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.image-toolbar-btn:hover {
+  background: var(--border-color);
+}
+
+.image-toolbar-btn.active {
+  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.image-toolbar-btn.danger {
+  border-color: #e04343;
+  color: #e04343;
+}
+
+.image-toolbar-btn.danger:hover {
+  background: #e04343;
+  color: white;
+}
+
 /* Context menu */
 #context-menu {
   position: fixed;

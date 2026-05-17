@@ -87,6 +87,7 @@ async function openFile() {
     });
     if (!selected) return;
 
+    deselectImage();
     const html = await invoke('open_file', { path: selected });
     currentFilePath = selected;
     isDirty = false;
@@ -498,11 +499,16 @@ imageBtn.addEventListener('click', async () => {
     });
     if (!selected) return;
 
+    // The native file picker stole focus and collapsed the live editor
+    // selection. Restore from savedRange (captured on toolbar mousedown).
+    restoreSelection();
+
     const img = document.createElement('img');
     img.setAttribute('src', selected.split('/').pop());
     img.setAttribute('alt', 'Image');
+
     const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
+    if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
       const range = sel.getRangeAt(0);
       range.deleteContents();
       range.insertNode(img);
@@ -511,22 +517,31 @@ imageBtn.addEventListener('click', async () => {
       sel.removeAllRanges();
       sel.addRange(range);
     } else {
-      visualEditor.insertAdjacentHTML('beforeend', img.outerHTML);
+      visualEditor.appendChild(img);
     }
-    isDirty = true; updateTitle(); debouncedSync();
-  } catch (err) { console.error('Image insert failed:', err); }
+    isDirty = true;
+    updateTitle();
+    // Sync immediately, not debounced — structural change shouldn't sit
+    // in DOM-only state where the next op reads stale engine source.
+    await syncToEngine();
+  } catch (err) {
+    console.error('Image insert failed:', err);
+    alert('Image insert failed: ' + (err && err.message ? err.message : err));
+  }
 });
 
 // ── Table Insert ──
 
 const tableBtn = document.getElementById('table-btn');
 
-tableBtn.addEventListener('click', () => {
+tableBtn.addEventListener('click', async () => {
   const rows = prompt('Number of rows:', '3');
+  if (!rows) return;
   const cols = prompt('Number of columns:', '3');
-  if (!rows || !cols) return;
+  if (!cols) return;
   const r = parseInt(rows), c = parseInt(cols);
   if (isNaN(r) || isNaN(c) || r <= 0 || c <= 0) return;
+
   let html = '<table>';
   for (let i = 0; i < r; i++) {
     html += '<tr>';
@@ -537,8 +552,12 @@ tableBtn.addEventListener('click', () => {
   }
   html += '</table>';
 
+  // The native prompt() calls stole focus. Restore the caret position
+  // captured on toolbar mousedown.
+  restoreSelection();
+
   const sel = window.getSelection();
-  if (sel && sel.rangeCount > 0) {
+  if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
     const range = sel.getRangeAt(0);
     range.deleteContents();
     const temp = document.createElement('div');
@@ -550,12 +569,12 @@ tableBtn.addEventListener('click', () => {
     sel.removeAllRanges();
     sel.addRange(range);
   } else {
-    visualEditor.innerHTML += html;
+    visualEditor.insertAdjacentHTML('beforeend', html);
   }
   addTableGuideBorders();
   isDirty = true;
   updateTitle();
-  debouncedSync();
+  await syncToEngine();
 });
 
 // ── Undo/Redo via Engine ──
@@ -580,6 +599,7 @@ document.addEventListener('keydown', async (e) => {
   }
 
   if (isMeta && e.key === 'o') { e.preventDefault(); await openFile(); }
+  if (isMeta && e.key === 'n') { e.preventDefault(); await invoke('new_window').catch(err => console.error('New window failed:', err)); }
   if (isMeta && e.key === 's' && e.shiftKey) { e.preventDefault(); await saveFileAs(); }
   else if (isMeta && e.key === 's') { e.preventDefault(); await saveFile(); }
   if (isMeta && e.shiftKey && e.key === 'v') { e.preventDefault(); switchMode(editMode === 'visual' ? 'source' : 'visual'); }
@@ -615,6 +635,7 @@ sourceModeBtn.addEventListener('click', () => switchMode('source'));
 
 async function switchMode(mode) {
   if (mode === editMode) return;
+  deselectImage();
   try {
     if (editMode === 'source') {
       await invoke('set_source_content', { content: sourceTextarea.value });
@@ -685,6 +706,9 @@ visualEditor.addEventListener('contextmenu', async (e) => {
 document.addEventListener('click', (e) => {
   if (contextMenuEl && !contextMenuEl.contains(e.target)) removeContextMenu();
   if (!e.target.closest('#link-popover')) removeLinkPopover();
+  if (selectedImage && !e.target.closest('#image-toolbar') && e.target !== selectedImage && !e.target.closest('.resize-handle') && (!imageToolbar || !imageToolbar.contains(e.target))) {
+    deselectImage();
+  }
 });
 
 function removeContextMenu() {
@@ -731,8 +755,9 @@ async function handleTableAction(cell, action) {
 // ── Link Editing ──
 
 linkBtn.addEventListener('click', () => {
+  // Open the popover regardless of whether text is selected. If selection
+  // exists we'll wrap it; otherwise we'll insert a new <a> at the caret.
   const selectedText = getActiveSelectionText();
-  if (!selectedText) return;
   showLinkPopover(selectedText);
 });
 
@@ -751,8 +776,12 @@ function showLinkPopover(selectedText) {
   `;
 
   const sel = window.getSelection();
-  if (sel && sel.rangeCount > 0) {
+  if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
     const rect = sel.getRangeAt(0).getBoundingClientRect();
+    popover.style.top = `${rect.bottom + 8}px`;
+    popover.style.left = `${Math.min(rect.left, window.innerWidth - 300)}px`;
+  } else if (savedRange) {
+    const rect = savedRange.getBoundingClientRect();
     popover.style.top = `${rect.bottom + 8}px`;
     popover.style.left = `${Math.min(rect.left, window.innerWidth - 300)}px`;
   }
@@ -769,12 +798,34 @@ function showLinkPopover(selectedText) {
     const targetAttr = newTab ? ' target="_blank"' : '';
     const replacement = `<a href="${url}"${targetAttr}>${text}</a>`;
 
-    await syncToEngine();
-    const source = await invoke('get_current_html');
-    const offset = source.indexOf(selectedText);
-    if (offset >= 0) {
-      await applyFormatPatch(offset, selectedText.length, replacement);
+    if (selectedText) {
+      // Wrap the existing selection
+      await syncToEngine();
+      const source = await invoke('get_current_html');
+      const offset = source.indexOf(selectedText);
+      if (offset >= 0) {
+        await applyFormatPatch(offset, selectedText.length, replacement);
+      }
+    } else {
+      // Insert a new link at the saved caret position
+      restoreSelection();
+      const liveSel = window.getSelection();
+      if (liveSel && liveSel.rangeCount > 0 && liveSel.anchorNode && visualEditor.contains(liveSel.anchorNode)) {
+        const range = liveSel.getRangeAt(0);
+        const temp = document.createElement('div');
+        temp.innerHTML = replacement;
+        const a = temp.firstChild;
+        range.insertNode(a);
+        range.setStartAfter(a);
+        range.collapse(true);
+        liveSel.removeAllRanges();
+        liveSel.addRange(range);
+      } else {
+        visualEditor.insertAdjacentHTML('beforeend', replacement);
+      }
+      await syncToEngine();
     }
+
     isDirty = true;
     updateTitle();
     removeLinkPopover();
@@ -790,22 +841,293 @@ function removeLinkPopover() {
 
 // ── Image Handling ──
 
+let selectedImage = null;
+let resizeHandles = null;
+let imageToolbar = null;
+let resizing = false;
+let resizeDir = null;
+let resizeStartX = 0;
+let resizeStartY = 0;
+let resizeStartW = 0;
+let resizeStartH = 0;
+let resizeStartAspect = 1;
+let resizePreviewFrame = null;
+
+function deselectImage() {
+  if (selectedImage) {
+    selectedImage.classList.remove('selected');
+    selectedImage.style.outline = '';
+    selectedImage.style.outlineOffset = '';
+    selectedImage = null;
+  }
+  removeResizeHandles();
+  removeImageToolbar();
+}
+
+function removeResizeHandles() {
+  if (resizeHandles) { resizeHandles.forEach(h => h.remove()); resizeHandles = null; }
+}
+
+function removeImageToolbar() {
+  if (imageToolbar) { imageToolbar.remove(); imageToolbar = null; }
+}
+
+function selectImage(img) {
+  deselectImage();
+  selectedImage = img;
+  img.classList.add('selected');
+  img.style.outline = '2px solid var(--accent-color)';
+  img.style.outlineOffset = '2px';
+  showResizeHandles(img);
+  showImageToolbar(img);
+}
+
+function showResizeHandles(img) {
+  removeResizeHandles();
+  const rect = img.getBoundingClientRect();
+  const hs = 8; // handle size
+  const directions = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+
+  resizeHandles = directions.map(dir => {
+    const h = document.createElement('div');
+    h.className = 'resize-handle';
+    h.dataset.dir = dir;
+    h.style.cssText = `position:fixed;width:${hs}px;height:${hs}px;background:white;border:1px solid var(--accent-color);z-index:150;cursor:${dir}-resize;pointer-events:auto;`;
+    h.addEventListener('mousedown', (e) => startResize(e, dir, img));
+    document.body.appendChild(h);
+    return h;
+  });
+  updateResizeHandlePositions(img);
+}
+
+function updateResizeHandlePositions(img) {
+  if (!resizeHandles) return;
+  const rect = img.getBoundingClientRect();
+  const hs = 8;
+  const positions = {
+    'nw': [rect.left - hs/2, rect.top - hs/2],
+    'n':  [rect.left + rect.width/2 - hs/2, rect.top - hs/2],
+    'ne': [rect.right - hs/2, rect.top - hs/2],
+    'e':  [rect.right - hs/2, rect.top + rect.height/2 - hs/2],
+    'se': [rect.right - hs/2, rect.bottom - hs/2],
+    's':  [rect.left + rect.width/2 - hs/2, rect.bottom - hs/2],
+    'sw': [rect.left - hs/2, rect.bottom - hs/2],
+    'w':  [rect.left - hs/2, rect.top + rect.height/2 - hs/2],
+  };
+  resizeHandles.forEach(h => {
+    const [l, t] = positions[h.dataset.dir];
+    h.style.left = l + 'px';
+    h.style.top = t + 'px';
+  });
+}
+
+function startResize(e, dir, img) {
+  e.preventDefault();
+  e.stopPropagation();
+  resizing = true;
+  resizeDir = dir;
+  resizeStartX = e.clientX;
+  resizeStartY = e.clientY;
+  resizeStartW = img.offsetWidth;
+  resizeStartH = img.offsetHeight;
+  resizeStartAspect = resizeStartW / (resizeStartH || 1);
+
+  // Create a semi-transparent preview overlay showing target dimensions
+  resizePreviewFrame = document.createElement('div');
+  resizePreviewFrame.className = 'resize-preview';
+  resizePreviewFrame.style.cssText = `position:fixed;border:1px dashed var(--accent-color);background:rgba(0,113,227,0.08);z-index:140;pointer-events:none;left:${img.getBoundingClientRect().left}px;top:${img.getBoundingClientRect().top}px;width:${resizeStartW}px;height:${resizeStartH}px;`;
+  document.body.appendChild(resizePreviewFrame);
+
+  document.addEventListener('mousemove', onResizeMove);
+  document.addEventListener('mouseup', onResizeEnd);
+}
+
+function onResizeMove(e) {
+  if (!resizing || !selectedImage) return;
+  const dx = e.clientX - resizeStartX;
+  const dy = e.clientY - resizeStartY;
+
+  let newW = resizeStartW;
+  let newH = resizeStartH;
+
+  switch (resizeDir) {
+    case 'e':  newW = resizeStartW + dx; break;
+    case 'w':  newW = resizeStartW - dx; break;
+    case 's':  newH = resizeStartH + dy; break;
+    case 'n':  newH = resizeStartH - dy; break;
+    case 'se': newW = resizeStartW + dx; newH = newW / resizeStartAspect; break;
+    case 'sw': newW = resizeStartW - dx; newH = newW / resizeStartAspect; break;
+    case 'ne': newW = resizeStartW + dx; newH = newW / resizeStartAspect; break;
+    case 'nw': newW = resizeStartW - dx; newH = newW / resizeStartAspect; break;
+  }
+
+  newW = Math.max(20, Math.round(newW));
+  newH = Math.max(20, Math.round(newH));
+
+  selectedImage.style.width = newW + 'px';
+  selectedImage.style.height = newH + 'px';
+
+  if (resizePreviewFrame) {
+    const rect = selectedImage.getBoundingClientRect();
+    resizePreviewFrame.style.width = rect.width + 'px';
+    resizePreviewFrame.style.height = rect.height + 'px';
+    resizePreviewFrame.style.left = rect.left + 'px';
+    resizePreviewFrame.style.top = rect.top + 'px';
+  }
+
+  updateResizeHandlePositions(selectedImage);
+  updateImageToolbarPosition();
+}
+
+function onResizeEnd() {
+  resizing = false;
+  resizeDir = null;
+  document.removeEventListener('mousemove', onResizeMove);
+  document.removeEventListener('mouseup', onResizeEnd);
+  if (resizePreviewFrame) { resizePreviewFrame.remove(); resizePreviewFrame = null; }
+  if (selectedImage) {
+    isDirty = true;
+    updateTitle();
+    debouncedSync();
+    updateSizeInputs();
+  }
+}
+
+function showImageToolbar(img) {
+  removeImageToolbar();
+  const rect = img.getBoundingClientRect();
+
+  imageToolbar = document.createElement('div');
+  imageToolbar.id = 'image-toolbar';
+  imageToolbar.innerHTML = `
+    <div class="image-toolbar-section">
+      <label class="image-toolbar-label">W</label>
+      <input type="number" id="img-width-input" class="image-toolbar-input" min="1" value="${Math.round(img.offsetWidth)}" />
+    </div>
+    <div class="image-toolbar-section">
+      <label class="image-toolbar-label">H</label>
+      <input type="number" id="img-height-input" class="image-toolbar-input" min="1" value="${Math.round(img.offsetHeight)}" />
+    </div>
+    <div class="image-toolbar-sep"></div>
+    <button class="image-toolbar-btn" id="img-link-btn" title="Wrap in Link">Link</button>
+    <button class="image-toolbar-btn" id="img-border-btn" title="Toggle Border">Border</button>
+    <button class="image-toolbar-btn" id="img-replace-btn" title="Replace Image">Replace</button>
+    <button class="image-toolbar-btn danger" id="img-remove-btn" title="Remove Image">Remove</button>
+  `;
+  imageToolbar.style.cssText = `position:fixed;z-index:200;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:6px 8px;display:flex;align-items:center;gap:4px;`;
+
+  document.body.appendChild(imageToolbar);
+  updateImageToolbarPosition();
+
+  // Initialize button handlers
+  function updateImageToolbarPosition() {
+    if (!imageToolbar || !selectedImage) return;
+    const r = selectedImage.getBoundingClientRect();
+    const top = r.bottom + 6;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - 340));
+    imageToolbar.style.top = top + 'px';
+    imageToolbar.style.left = left + 'px';
+  }
+
+  document.getElementById('img-width-input').addEventListener('change', () => {
+    if (!selectedImage) return;
+    const w = parseInt(document.getElementById('img-width-input').value) || 100;
+    selectedImage.style.width = w + 'px';
+    selectedImage.style.height = '';
+    updateResizeHandlePositions(selectedImage);
+    updateImageToolbarPosition();
+    isDirty = true; updateTitle(); debouncedSync();
+  });
+
+  document.getElementById('img-height-input').addEventListener('change', () => {
+    if (!selectedImage) return;
+    const h = parseInt(document.getElementById('img-height-input').value) || 100;
+    selectedImage.style.height = h + 'px';
+    selectedImage.style.width = '';
+    updateResizeHandlePositions(selectedImage);
+    updateImageToolbarPosition();
+    isDirty = true; updateTitle(); debouncedSync();
+  });
+
+  document.getElementById('img-replace-btn').addEventListener('click', async () => {
+    if (!selectedImage) return;
+    try {
+      const selected = await open({
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
+        multiple: false,
+      });
+      if (!selected) return;
+      selectedImage.setAttribute('src', selected.split('/').pop());
+      isDirty = true; updateTitle(); debouncedSync();
+    } catch (err) { console.error('Image replace failed:', err); }
+  });
+
+  document.getElementById('img-remove-btn').addEventListener('click', () => {
+    if (!selectedImage) return;
+    const img = selectedImage;
+    deselectImage();
+    img.remove();
+    isDirty = true; updateTitle(); debouncedSync();
+  });
+
+  document.getElementById('img-border-btn').addEventListener('click', () => {
+    if (!selectedImage) return;
+    const style = selectedImage.getAttribute('style') || '';
+    if (style.includes('border:')) {
+      selectedImage.style.border = '';
+      document.getElementById('img-border-btn').classList.remove('active');
+    } else {
+      selectedImage.style.border = '1px solid var(--border-color)';
+      document.getElementById('img-border-btn').classList.add('active');
+    }
+    isDirty = true; updateTitle(); debouncedSync();
+  });
+
+  document.getElementById('img-link-btn').addEventListener('click', async () => {
+    if (!selectedImage) return;
+    const url = prompt('Enter link URL (https://...)', '');
+    if (!url) return;
+    const a = document.createElement('a');
+    a.setAttribute('href', url);
+    selectedImage.parentNode.insertBefore(a, selectedImage);
+    a.appendChild(selectedImage);
+    isDirty = true; updateTitle(); debouncedSync();
+  });
+
+  const currentBorder = selectedImage.style.border || '';
+  if (currentBorder && currentBorder !== 'none') {
+    document.getElementById('img-border-btn').classList.add('active');
+  }
+}
+
+function updateSizeInputs() {
+  if (!selectedImage || !imageToolbar) return;
+  const wInput = document.getElementById('img-width-input');
+  const hInput = document.getElementById('img-height-input');
+  if (wInput) wInput.value = Math.round(selectedImage.offsetWidth);
+  if (hInput) hInput.value = Math.round(selectedImage.offsetHeight);
+}
+
+function updateImageToolbarPosition() {
+  if (!imageToolbar || !selectedImage) return;
+  const r = selectedImage.getBoundingClientRect();
+  imageToolbar.style.top = (r.bottom + 6) + 'px';
+  imageToolbar.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 340)) + 'px';
+}
+
 visualEditor.addEventListener('click', (e) => {
   if (e.target.tagName === 'IMG') {
-    visualEditor.querySelectorAll('img.selected').forEach(img => {
-      img.classList.remove('selected');
-      img.style.outline = '';
-      img.style.outlineOffset = '';
-    });
-    e.target.classList.add('selected');
-    e.target.style.outline = '2px solid var(--accent-color)';
-    e.target.style.outlineOffset = '2px';
+    selectImage(e.target);
+    e.stopPropagation();
+  } else {
+    deselectImage();
   }
 });
 
 visualEditor.addEventListener('dblclick', async (e) => {
   if (e.target.tagName !== 'IMG') return;
   e.preventDefault();
+  e.stopPropagation();
   try {
     const selected = await open({
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
@@ -914,10 +1236,12 @@ if (pdfBtn) {
 // preventDefault is somehow bypassed (WKWebView quirks, <select>, etc.)
 // the click handler still has a valid range to fall back on.
 document.getElementById('toolbar').addEventListener('mousedown', (e) => {
+  // Always save the live range (even when collapsed) so insert-at-cursor
+  // operations (image, table, link without selection) can restore the
+  // caret position after a file picker or prompt steals focus.
   const sel = window.getSelection();
   if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
-    const r = sel.getRangeAt(0);
-    if (!r.collapsed) savedRange = r.cloneRange();
+    savedRange = sel.getRangeAt(0).cloneRange();
   }
   const btn = e.target.closest('button');
   if (btn && !btn.disabled) {
@@ -937,6 +1261,15 @@ if (toolbarOpenBtn) {
 const recentBtn = document.getElementById('recent-btn');
 if (recentBtn) {
   recentBtn.addEventListener('click', toggleRecentPanel);
+}
+
+// New window button
+const newWindowBtn = document.getElementById('new-window-btn');
+if (newWindowBtn) {
+  newWindowBtn.addEventListener('click', async () => {
+    try { await invoke('new_window'); }
+    catch (err) { console.error('New window failed:', err); }
+  });
 }
 
 function toggleRecentPanel() {
@@ -997,7 +1330,17 @@ function escapeHtml(str) {
 }
 
 renderRecentFiles();
-console.log('PageSmith v0.4.4 — ad-hoc signing + version sync');
+console.log('PageSmith v0.5 — image resize, multi-window, undo cap');
+
+// Keep image handles and toolbar positioned on scroll/resize
+visualEditor.addEventListener('scroll', () => {
+  if (resizeHandles && selectedImage) updateResizeHandlePositions(selectedImage);
+  if (imageToolbar && selectedImage) updateImageToolbarPosition();
+});
+window.addEventListener('resize', () => {
+  if (resizeHandles && selectedImage) updateResizeHandlePositions(selectedImage);
+  if (imageToolbar && selectedImage) updateImageToolbarPosition();
+});
 
 // Theme toggle (auto → dark → light → auto)
 const themeBtn = document.getElementById('theme-btn');

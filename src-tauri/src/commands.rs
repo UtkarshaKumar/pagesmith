@@ -1,49 +1,81 @@
-/// Tauri IPC commands that bridge the frontend JS to the surgical engine.
 use crate::engine::patch::{Patch, UndoStack};
 use crate::engine::source_model::SourceModel;
 use crate::engine::file_io;
 use crate::engine::parser;
+use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::State;
+use std::sync::atomic::{AtomicU32, Ordering};
+use tauri::{State, Window, WebviewUrl, WebviewWindowBuilder};
+
+static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
+
+#[derive(Default)]
+pub struct WindowState {
+    pub model: Option<SourceModel>,
+    pub undo_stack: UndoStack,
+}
 
 pub struct AppState {
-    pub model: Mutex<Option<SourceModel>>,
-    pub undo_stack: Mutex<UndoStack>,
+    pub windows: Mutex<HashMap<String, WindowState>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        Self { model: Mutex::new(None), undo_stack: Mutex::new(UndoStack::new()) }
+        Self { windows: Mutex::new(HashMap::new()) }
     }
 }
 
+fn get_window_state<'a>(
+    windows: &'a mut HashMap<String, WindowState>,
+    label: &str,
+) -> &'a mut WindowState {
+    windows.entry(label.to_string()).or_insert_with(|| WindowState {
+        model: None,
+        undo_stack: UndoStack::new(),
+    })
+}
+
+fn cleanup_window(state: &AppState, label: &str) {
+    state.windows.lock().unwrap().remove(label);
+}
+
 #[tauri::command]
-pub fn open_file(state: State<AppState>, path: String) -> Result<String, String> {
+pub fn open_file(state: State<AppState>, window: Window, path: String) -> Result<String, String> {
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = get_window_state(&mut windows, &label);
     let model = file_io::read_file(std::path::Path::new(&path)).map_err(|e| e.to_string())?;
     let html = model.as_str().map_err(|e| e.to_string())?.to_string();
-    *state.model.lock().unwrap() = Some(model);
+    ws.model = Some(model);
+    ws.undo_stack.clear(); // fresh undo history per file
     Ok(html)
 }
 
 #[tauri::command]
-pub fn get_current_html(state: State<AppState>) -> Result<String, String> {
-    let model = state.model.lock().unwrap();
-    model.as_ref().map(|m| m.as_str().map(|s| s.to_string()).map_err(|e| e.to_string())).unwrap_or(Err("No file open".to_string()))
+pub fn get_current_html(state: State<AppState>, window: Window) -> Result<String, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    let ws = windows.get(&label).ok_or("No window state found")?;
+    ws.model.as_ref().map(|m| m.as_str().map(|s| s.to_string()).map_err(|e| e.to_string())).unwrap_or(Err("No file open".to_string()))
 }
 
 #[tauri::command]
-pub fn save_file(state: State<AppState>) -> Result<(), String> {
-    let mut model = state.model.lock().unwrap();
-    let model = model.as_mut().ok_or("No file open")?;
+pub fn save_file(state: State<AppState>, window: Window) -> Result<(), String> {
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = windows.get_mut(&label).ok_or("No window state found")?;
+    let model = ws.model.as_mut().ok_or("No file open")?;
     file_io::write_file_atomic(model).map_err(|e| e.to_string())?;
     model.mark_clean();
     Ok(())
 }
 
 #[tauri::command]
-pub fn save_file_as(state: State<AppState>, path: String) -> Result<(), String> {
-    let mut model = state.model.lock().unwrap();
-    let model = model.as_mut().ok_or("No file open")?;
+pub fn save_file_as(state: State<AppState>, window: Window, path: String) -> Result<(), String> {
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = windows.get_mut(&label).ok_or("No window state found")?;
+    let model = ws.model.as_mut().ok_or("No file open")?;
     let content = model.as_str().map_err(|e| e.to_string())?.to_string();
     file_io::write_file_string_atomic(std::path::Path::new(&path), &content).map_err(|e| e.to_string())?;
     model.file_path = Some(path);
@@ -52,19 +84,25 @@ pub fn save_file_as(state: State<AppState>, path: String) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub fn is_file_dirty(state: State<AppState>) -> Result<bool, String> {
-    Ok(state.model.lock().unwrap().as_ref().map(|m| m.is_dirty).unwrap_or(false))
+pub fn is_file_dirty(state: State<AppState>, window: Window) -> Result<bool, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    Ok(windows.get(&label).and_then(|ws| ws.model.as_ref()).map(|m| m.is_dirty).unwrap_or(false))
 }
 
 #[tauri::command]
-pub fn get_file_path(state: State<AppState>) -> Result<Option<String>, String> {
-    Ok(state.model.lock().unwrap().as_ref().and_then(|m| m.file_path.clone()))
+pub fn get_file_path(state: State<AppState>, window: Window) -> Result<Option<String>, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    Ok(windows.get(&label).and_then(|ws| ws.model.as_ref()).and_then(|m| m.file_path.clone()))
 }
 
 #[tauri::command]
-pub fn apply_patch(state: State<AppState>, offset: usize, length: usize, replacement: String) -> Result<String, String> {
-    let mut model = state.model.lock().unwrap();
-    let model = model.as_mut().ok_or("No file open")?;
+pub fn apply_patch(state: State<AppState>, window: Window, offset: usize, length: usize, replacement: String) -> Result<String, String> {
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = windows.get_mut(&label).ok_or("No window state found")?;
+    let model = ws.model.as_mut().ok_or("No file open")?;
     let total_len = model.raw.len();
 
     if offset > total_len {
@@ -75,75 +113,107 @@ pub fn apply_patch(state: State<AppState>, offset: usize, length: usize, replace
     let original_slice = model.raw[offset..offset + length].to_vec();
     let patch = Patch::new(offset, length, replacement.as_bytes().to_vec());
     patch.apply(model).map_err(|e| e.to_string())?;
-    state.undo_stack.lock().unwrap().record(patch, original_slice);
+    ws.undo_stack.record(patch, original_slice);
     model.as_str().map(|s| s.to_string()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn undo(state: State<AppState>) -> Result<String, String> {
-    let mut model = state.model.lock().unwrap();
-    let model = model.as_mut().ok_or("No file open")?;
-    let inverse = state.undo_stack.lock().unwrap().undo().ok_or("Nothing to undo")?;
+pub fn undo(state: State<AppState>, window: Window) -> Result<String, String> {
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = windows.get_mut(&label).ok_or("No window state found")?;
+    let model = ws.model.as_mut().ok_or("No file open")?;
+    let inverse = ws.undo_stack.undo().ok_or("Nothing to undo")?;
     inverse.apply(model).map_err(|e| e.to_string())?;
     model.as_str().map(|s| s.to_string()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn redo(state: State<AppState>) -> Result<String, String> {
-    let mut model = state.model.lock().unwrap();
-    let model = model.as_mut().ok_or("No file open")?;
-    let forward = { state.undo_stack.lock().unwrap().redo(model).ok_or("Nothing to redo")? };
+pub fn redo(state: State<AppState>, window: Window) -> Result<String, String> {
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = windows.get_mut(&label).ok_or("No window state found")?;
+    let model = ws.model.as_mut().ok_or("No file open")?;
+    let forward = { ws.undo_stack.redo(model).ok_or("Nothing to redo")? };
     forward.apply(model).map_err(|e| e.to_string())?;
     model.as_str().map(|s| s.to_string()).map_err(|e| e.to_string())
 }
 
-#[tauri::command] pub fn can_undo(state: State<AppState>) -> Result<bool, String> { Ok(state.undo_stack.lock().unwrap().can_undo()) }
-#[tauri::command] pub fn can_redo(state: State<AppState>) -> Result<bool, String> { Ok(state.undo_stack.lock().unwrap().can_redo()) }
-#[tauri::command] pub fn get_source_length(state: State<AppState>) -> Result<usize, String> { state.model.lock().unwrap().as_ref().map(|m| m.len()).ok_or("No file open".to_string()) }
+#[tauri::command] pub fn can_undo(state: State<AppState>, window: Window) -> Result<bool, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    Ok(windows.get(&label).map(|ws| ws.undo_stack.can_undo()).unwrap_or(false))
+}
+#[tauri::command] pub fn can_redo(state: State<AppState>, window: Window) -> Result<bool, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    Ok(windows.get(&label).map(|ws| ws.undo_stack.can_redo()).unwrap_or(false))
+}
+#[tauri::command] pub fn get_source_length(state: State<AppState>, window: Window) -> Result<usize, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    windows.get(&label).and_then(|ws| ws.model.as_ref()).map(|m| m.len()).ok_or("No file open".to_string())
+}
 
 #[tauri::command]
-pub fn read_range(state: State<AppState>, offset: usize, length: usize) -> Result<String, String> {
-    let model = state.model.lock().unwrap();
-    let model = model.as_ref().ok_or("No file open")?;
+pub fn read_range(state: State<AppState>, window: Window, offset: usize, length: usize) -> Result<String, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    let ws = windows.get(&label).ok_or("No window state found")?;
+    let model = ws.model.as_ref().ok_or("No file open")?;
     if offset > model.len() { return Err(format!("offset {} out of bounds (len {})", offset, model.len())); }
     let end = (offset + length).min(model.len());
     Ok(String::from_utf8_lossy(&model.raw[offset..end]).to_string())
 }
 
-#[tauri::command] pub fn parse_source_map(state: State<AppState>) -> Result<usize, String> { let m = state.model.lock().unwrap(); let m = m.as_ref().ok_or("No file open")?; Ok(parser::parse_html(&m.raw).node_count()) }
+#[tauri::command] pub fn parse_source_map(state: State<AppState>, window: Window) -> Result<usize, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    let ws = windows.get(&label).ok_or("No window state found")?;
+    let m = ws.model.as_ref().ok_or("No file open")?;
+    Ok(parser::parse_html(&m.raw).node_count())
+}
 
 #[tauri::command]
-pub fn get_file_info(state: State<AppState>) -> Result<serde_json::Value, String> {
-    let model = state.model.lock().unwrap();
-    match model.as_ref() {
+pub fn get_file_info(state: State<AppState>, window: Window) -> Result<serde_json::Value, String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    let ws = windows.get(&label).unwrap_or_else(|| {
+        panic!("Window state not found for {}", label)
+    });
+    match ws.model.as_ref() {
         Some(m) => Ok(serde_json::json!({"path":m.file_path,"is_dirty":m.is_dirty,"length":m.len(),"encoding":m.encoding})),
         None => Ok(serde_json::json!({"path":null,"is_dirty":false,"length":0,"encoding":"utf-8"})),
     }
 }
 
 #[tauri::command]
-pub fn set_source_content(state: State<AppState>, content: String) -> Result<(), String> {
-    let mut model = state.model.lock().unwrap();
-    let model = model.as_mut().ok_or("No file open")?;
+pub fn set_source_content(state: State<AppState>, window: Window, content: String) -> Result<(), String> {
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = windows.get_mut(&label).ok_or("No window state found")?;
+    let model = ws.model.as_mut().ok_or("No file open")?;
     model.raw = content.into_bytes();
     model.is_dirty = true;
     model.source_map = parser::parse_html(&model.raw);
-    state.undo_stack.lock().unwrap().clear(); // old patches invalidated by full replace
+    ws.undo_stack.clear();
     Ok(())
 }
 
 #[tauri::command]
-pub fn replace_in_source(state: State<AppState>, offset_hint: usize, old_text: String, new_text: String) -> Result<serde_json::Value, String> {
+pub fn replace_in_source(state: State<AppState>, window: Window, offset_hint: usize, old_text: String, new_text: String) -> Result<serde_json::Value, String> {
     if old_text.is_empty() { return Err("old_text cannot be empty".to_string()); }
-    let mut model = state.model.lock().unwrap();
-    let model = model.as_mut().ok_or("No file open")?;
+    let label = window.label().to_string();
+    let mut windows = state.windows.lock().unwrap();
+    let ws = windows.get_mut(&label).ok_or("No window state found")?;
+    let model = ws.model.as_mut().ok_or("No file open")?;
     let source_str = model.as_str().map_err(|e| e.to_string())?;
     let actual_offset = find_text(source_str, &old_text, offset_hint)
         .ok_or_else(|| format!("Could not find '{}' in source near offset {}", old_text, offset_hint))?;
     let patch = Patch::new(actual_offset, old_text.len(), new_text.as_bytes().to_vec());
     let original_slice = model.raw[actual_offset..actual_offset + old_text.len()].to_vec();
     patch.apply(model).map_err(|e| e.to_string())?;
-    state.undo_stack.lock().unwrap().record(patch, original_slice);
+    ws.undo_stack.record(patch, original_slice);
     let new_source = model.as_str().map_err(|e| e.to_string())?.to_string();
     Ok(serde_json::json!({"source":new_source,"offset":actual_offset,"new_length":new_text.len()}))
 }
@@ -162,14 +232,35 @@ fn find_text(haystack: &str, needle: &str, hint: usize) -> Option<usize> {
 }
 
 #[tauri::command]
-pub fn export_pdf(state: State<AppState>, path: String) -> Result<(), String> {
-    let model = state.model.lock().unwrap();
-    let model = model.as_ref().ok_or("No file open")?;
+pub fn export_pdf(state: State<AppState>, window: Window, path: String) -> Result<(), String> {
+    let label = window.label().to_string();
+    let windows = state.windows.lock().unwrap();
+    let ws = windows.get(&label).ok_or("No window state found")?;
+    let model = ws.model.as_ref().ok_or("No file open")?;
     let html = model.as_str().map_err(|e| e.to_string())?;
-    // Wrap in a basic HTML document if not already
     let doc = if html.contains("<html") { html.to_string() } else {
         format!("<!DOCTYPE html><html><head><meta charset='utf-8'><style>body{{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;line-height:1.6}}</style></head><body>{}</body></html>", html)
     };
     std::fs::write(std::path::Path::new(&path), &doc).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn new_window(app: tauri::AppHandle) -> Result<(), String> {
+    let n = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let label = format!("pagesmith-{}", n);
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
+        .title("PageSmith")
+        .inner_size(1200.0, 800.0)
+        .min_inner_size(800.0, 600.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_window(window: Window, state: State<AppState>) {
+    let label = window.label().to_string();
+    cleanup_window(&state, &label);
+    let _ = window.close();
 }

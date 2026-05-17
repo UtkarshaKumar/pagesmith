@@ -130,6 +130,7 @@ impl Patch {
 }
 
 /// Undo/Redo stack for patches.
+/// Capped at MAX_UNDO_DEPTH entries to prevent unbounded memory growth.
 #[derive(Debug, Clone, Default)]
 pub struct UndoStack {
     /// History of applied patches with their inverse stored
@@ -138,6 +139,8 @@ pub struct UndoStack {
     redo_stack: Vec<(Patch, Vec<u8>)>,
 }
 
+const MAX_UNDO_DEPTH: usize = 200;
+
 impl UndoStack {
     pub fn new() -> Self {
         Self::default()
@@ -145,9 +148,13 @@ impl UndoStack {
 
     /// Record a patch that was applied. Stores the forward patch
     /// and the original bytes for inverse computation.
+    /// Oldest entries are evicted when the stack exceeds MAX_UNDO_DEPTH.
     pub fn record(&mut self, patch: Patch, original_bytes: Vec<u8>) {
+        while self.undo_stack.len() >= MAX_UNDO_DEPTH {
+            self.undo_stack.remove(0);
+        }
         self.undo_stack.push((patch, original_bytes));
-        self.redo_stack.clear(); // New action invalidates redo
+        self.redo_stack.clear();
     }
 
     /// Get the inverse patch for the last action, moving it to redo.
