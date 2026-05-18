@@ -581,33 +581,46 @@ tableBtn.addEventListener('click', async () => {
 
 document.addEventListener('keydown', async (e) => {
   const isMeta = e.metaKey || e.ctrlKey;
+  const key = e.key.toLowerCase();
 
-  if (isMeta && e.key === 'z' && !e.shiftKey) {
+  if (isMeta && key === 'z' && !e.shiftKey) {
     e.preventDefault();
     try {
       const source = await invoke('undo');
       renderFromSource(source);
     } catch (err) { /* nothing to undo */ }
+    return;
   }
 
-  if (isMeta && e.key === 'z' && e.shiftKey) {
+  if (isMeta && key === 'z' && e.shiftKey) {
     e.preventDefault();
     try {
       const source = await invoke('redo');
       renderFromSource(source);
     } catch (err) { /* nothing to redo */ }
+    return;
   }
 
-  if (isMeta && e.key === 'o') { e.preventDefault(); await openFile(); }
-  if (isMeta && e.key === 'n') { e.preventDefault(); await invoke('new_window').catch(err => console.error('New window failed:', err)); }
-  if (isMeta && e.key === 's' && e.shiftKey) { e.preventDefault(); await saveFileAs(); }
-  else if (isMeta && e.key === 's') { e.preventDefault(); await saveFile(); }
-  if (isMeta && e.shiftKey && e.key === 'v') { e.preventDefault(); switchMode(editMode === 'visual' ? 'source' : 'visual'); }
-  if (isMeta && e.key === 'k') { e.preventDefault(); linkBtn.click(); }
+  if (isMeta && key === 'b') { e.preventDefault(); await wrapSelection('strong'); return; }
+  if (isMeta && key === 'i') { e.preventDefault(); await wrapSelection('em'); return; }
+  if (isMeta && key === 'u') { e.preventDefault(); await wrapSelection('u'); return; }
 
-  if (isMeta && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+  if (isMeta && key === 'o') { e.preventDefault(); await openFile(); return; }
+  if (isMeta && key === 'n') { e.preventDefault(); await invoke('new_window').catch(err => console.error('New window failed:', err)); return; }
+  if (isMeta && key === 's' && e.shiftKey) { e.preventDefault(); await saveFileAs(); return; }
+  if (isMeta && key === 's') { e.preventDefault(); await saveFile(); return; }
+  if (isMeta && key === 'k') { e.preventDefault(); linkBtn.click(); return; }
+
+  if (isMeta && e.shiftKey && key === 'v') {
     e.preventDefault();
     await switchMode(editMode === 'visual' ? 'source' : 'visual');
+    return;
+  }
+
+  if (isMeta && e.shiftKey && key === 'm') {
+    e.preventDefault();
+    await switchMode(editMode === 'visual' ? 'source' : 'visual');
+    return;
   }
 
   // Zoom
@@ -615,16 +628,19 @@ document.addEventListener('keydown', async (e) => {
     e.preventDefault();
     zoomLevel = Math.min(zoomLevel + 10, 300);
     document.documentElement.style.zoom = zoomLevel + '%';
+    return;
   }
   if (isMeta && e.key === '-') {
     e.preventDefault();
     zoomLevel = Math.max(zoomLevel - 10, 50);
     document.documentElement.style.zoom = zoomLevel + '%';
+    return;
   }
   if (isMeta && e.key === '0') {
     e.preventDefault();
     zoomLevel = 100;
     document.documentElement.style.zoom = '100%';
+    return;
   }
 });
 
