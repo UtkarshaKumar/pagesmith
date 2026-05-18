@@ -1,0 +1,154 @@
+{
+  "app": {
+    "title": "PageSmith",
+    "titleSuffix": " — PageSmith",
+    "titleDirtyPrefix": "● ",
+    "untitled": "Untitled"
+  },
+  "emptyState": {
+    "heading": "Open an HTML file to start editing",
+    "openButton": "Open...",
+    "recentLabel": "Recently opened files will appear here",
+    "recentHeading": "Recently opened files will appear here"
+  },
+  "mode": {
+    "visual": "Visual",
+    "source": "Source"
+  },
+  "toolbar": {
+    "openFile": "Open File (⌘O)",
+    "recentFiles": "Recent Files",
+    "newWindow": "New Window (⌘N)",
+    "noRecentFiles": "No recent files.",
+    "format": {
+      "p": "Paragraph",
+      "h1": "Heading 1",
+      "h2": "Heading 2",
+      "h3": "Heading 3",
+      "h4": "Heading 4",
+      "h5": "Heading 5",
+      "h6": "Heading 6",
+      "blockquote": "Blockquote",
+      "pre": "Preformatted",
+      "article": "Article",
+      "section": "Section",
+      "nav": "Nav",
+      "header": "Header",
+      "footer": "Footer",
+      "aside": "Aside",
+      "figure": "Figure",
+      "main": "Main"
+    },
+    "font": {
+      "label": "Font",
+      "system": "System",
+      "arial": "Arial",
+      "helvetica": "Helvetica",
+      "georgia": "Georgia",
+      "timesNewRoman": "Times New Roman",
+      "courierNew": "Courier New",
+      "verdana": "Verdana",
+      "trebuchetMS": "Trebuchet MS"
+    },
+    "fontSize": {
+      "label": "Size",
+      "8pt": "8pt",
+      "10pt": "10pt",
+      "12pt": "12pt",
+      "14pt": "14pt",
+      "18pt": "18pt",
+      "24pt": "24pt",
+      "36pt": "36pt"
+    },
+    "bold": "Bold (⌘B)",
+    "italic": "Italic (⌘I)",
+    "underline": "Underline (⌘U)",
+    "strikethrough": "Strikethrough",
+    "bulletList": "Bullet List",
+    "numberedList": "Numbered List",
+    "alignLeft": "Align Left",
+    "alignCenter": "Align Center",
+    "alignRight": "Align Right",
+    "link": "Insert Link (⌘K)",
+    "image": "Insert Image",
+    "table": "Insert Table",
+    "pdf": "Export PDF",
+    "theme": "Toggle Theme"
+  },
+  "image": {
+    "toolbar": {
+      "width": "W",
+      "height": "H",
+      "link": "Link",
+      "linkTitle": "Wrap in Link",
+      "border": "Border",
+      "borderTitle": "Toggle Border",
+      "replace": "Replace",
+      "replaceTitle": "Replace Image",
+      "remove": "Remove",
+      "removeTitle": "Remove Image"
+    },
+    "linkPrompt": "Enter link URL (https://...)",
+    "altFallback": "Image",
+    "fileFilters": {
+      "name": "Images",
+      "extensions": ["png", "jpg", "jpeg", "gif", "svg", "webp"]
+    }
+  },
+  "table": {
+    "rowsPrompt": "Number of rows:",
+    "colsPrompt": "Number of columns:",
+    "defaultRows": "3",
+    "defaultCols": "3",
+    "contextMenu": {
+      "rowAbove": "Insert Row Above",
+      "rowBelow": "Insert Row Below",
+      "colLeft": "Insert Column Left",
+      "colRight": "Insert Column Right",
+      "deleteRow": "Delete Row",
+      "deleteCol": "Delete Column",
+      "deleteTable": "Delete Table"
+    }
+  },
+  "link": {
+    "urlPlaceholder": "https://...",
+    "textPlaceholder": "Link text",
+    "newTab": " Open in new tab",
+    "cancel": "Cancel",
+    "save": "Save"
+  },
+  "file": {
+    "filters": {
+      "html": {
+        "name": "HTML Files",
+        "extensions": ["html", "htm"]
+      },
+      "pdf": {
+        "name": "PDF Files",
+        "extensions": ["pdf"]
+      }
+    }
+  },
+  "errors": {
+    "openFailed": "Could not open the file. Check the path and permissions.",
+    "saveFailed": "Save did not complete. Your changes are still in the editor.",
+    "saveAsFailed": "Save As did not complete. Try a different location.",
+    "imageInsertFailed": "Could not insert the image. Check the file format.",
+    "imageReplaceFailed": "Could not replace the image.",
+    "pdfExportFailed": "Could not export PDF. Try again.",
+    "newWindowFailed": "Could not open a new window.",
+    "formatFailed": "Formatting could not be applied. Try again.",
+    "modeSwitchFailed": "Could not switch editing mode.",
+    "fileNotFound": "The file was moved or deleted since you last opened it.",
+    "externalUrlWarning": "External URLs open in your browser, not in PageSmith.",
+    "unknown": "Something went wrong. Try again or reopen the file."
+  },
+  "status": {
+    "saved": "File saved.",
+    "pdfExported": "PDF exported."
+  },
+  "editor": {
+    "placeholder": "Start editing...",
+    "imageAltFallback": "Image"
+  }
+}

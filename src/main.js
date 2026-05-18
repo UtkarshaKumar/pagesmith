@@ -1,4 +1,4 @@
-// PageSmith v0.4 — browser owns DOM, engine owns source
+// PageSmith v0.5 — browser owns DOM, engine owns source
 // Text edits: browser handles DOM (cursor preserved natively).
 // Engine synced async on each edit (no DOM re-render).
 // Formatting: engine patch → re-render with node-path cursor restore.
@@ -6,6 +6,27 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { t } from './locales/i18n.js';
+
+// ── Status bar (non-blocking, replaces alert()) ──
+
+const statusBar = document.getElementById('status-bar');
+let statusTimer = null;
+
+function showStatus(message, type = 'info', durationMs = 5000) {
+  if (statusTimer) clearTimeout(statusTimer);
+  statusBar.textContent = message;
+  statusBar.className = type;
+  statusBar.classList.remove('hidden');
+  if (type !== 'error') {
+    statusTimer = setTimeout(() => statusBar.classList.add('hidden'), durationMs);
+  }
+}
+
+function clearStatus() {
+  if (statusTimer) clearTimeout(statusTimer);
+  statusBar.classList.add('hidden');
+}
 
 // ── State ──
 
@@ -82,7 +103,7 @@ function getActiveSelectionText() {
 async function openFile() {
   try {
     const selected = await open({
-      filters: [{ name: 'HTML Files', extensions: ['html', 'htm'] }],
+      filters: [{ name: t('file.filters.html.name'), extensions: ['html', 'htm'] }],
       multiple: false,
     });
     if (!selected) return;
@@ -99,8 +120,10 @@ async function openFile() {
     showEditor();
     updateTitle();
     addRecentFile(selected);
+    clearStatus();
   } catch (err) {
-    alert('Failed to open file: ' + String(err?.message || err));
+    showStatus(t('errors.openFailed'), 'error');
+    console.error('Open file failed:', err);
   }
 }
 
@@ -115,15 +138,17 @@ async function saveFile() {
     await invoke('save_file');
     isDirty = false;
     updateTitle();
+    showStatus(t('status.saved'), 'success', 2500);
   } catch (err) {
-    alert('Save failed: ' + String(err?.message || err));
+    showStatus(t('errors.saveFailed'), 'error');
+    console.error('Save failed:', err);
   }
 }
 
 async function saveFileAs() {
   try {
     const path = await save({
-      filters: [{ name: 'HTML Files', extensions: ['html', 'htm'] }],
+      filters: [{ name: t('file.filters.html.name'), extensions: ['html', 'htm'] }],
     });
     if (!path) return;
     if (editMode === 'source') {
@@ -135,8 +160,10 @@ async function saveFileAs() {
     currentFilePath = path;
     isDirty = false;
     updateTitle();
+    clearStatus();
   } catch (err) {
-    alert('Save As failed: ' + String(err?.message || err));
+    showStatus(t('errors.saveAsFailed'), 'error');
+    console.error('Save As failed:', err);
   }
 }
 
@@ -183,7 +210,7 @@ visualEditor.addEventListener('click', async (e) => {
       // Schemes we don't open in-app
       if (/^(https?:|mailto:|tel:|javascript:)/i.test(rawHref)) {
         if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
-          alert('External URLs cannot be opened in-app. Use your browser.');
+          showStatus(t('errors.externalUrlWarning'), 'warning');
         }
         return;
       }
@@ -233,7 +260,7 @@ visualEditor.addEventListener('click', async (e) => {
           });
         }
       } catch (err) {
-        alert('Could not open: ' + targetPath);
+        showStatus(t('errors.fileNotFound'), 'error');
       }
     }
     return;
@@ -494,18 +521,16 @@ const imageBtn = document.getElementById('image-btn');
 imageBtn.addEventListener('click', async () => {
   try {
     const selected = await open({
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
+      filters: [{ name: t('image.fileFilters.name'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
       multiple: false,
     });
     if (!selected) return;
 
-    // The native file picker stole focus and collapsed the live editor
-    // selection. Restore from savedRange (captured on toolbar mousedown).
     restoreSelection();
 
     const img = document.createElement('img');
     img.setAttribute('src', selected.split('/').pop());
-    img.setAttribute('alt', 'Image');
+    img.setAttribute('alt', t('editor.imageAltFallback'));
 
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
@@ -521,530 +546,39 @@ imageBtn.addEventListener('click', async () => {
     }
     isDirty = true;
     updateTitle();
-    // Sync immediately, not debounced — structural change shouldn't sit
-    // in DOM-only state where the next op reads stale engine source.
     await syncToEngine();
   } catch (err) {
+    showStatus(t('errors.imageInsertFailed'), 'error');
     console.error('Image insert failed:', err);
-    alert('Image insert failed: ' + (err && err.message ? err.message : err));
   }
 });
-
-// ── Table Insert ──
-
-const tableBtn = document.getElementById('table-btn');
-
-tableBtn.addEventListener('click', async () => {
-  const rows = prompt('Number of rows:', '3');
-  if (!rows) return;
-  const cols = prompt('Number of columns:', '3');
-  if (!cols) return;
-  const r = parseInt(rows), c = parseInt(cols);
-  if (isNaN(r) || isNaN(c) || r <= 0 || c <= 0) return;
-
-  let html = '<table>';
-  for (let i = 0; i < r; i++) {
-    html += '<tr>';
-    for (let j = 0; j < c; j++) {
-      html += i === 0 ? '<th></th>' : '<td></td>';
-    }
-    html += '</tr>';
-  }
-  html += '</table>';
-
-  // The native prompt() calls stole focus. Restore the caret position
-  // captured on toolbar mousedown.
-  restoreSelection();
-
-  const sel = window.getSelection();
-  if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
-    const range = sel.getRangeAt(0);
-    range.deleteContents();
-    const temp = document.createElement('div');
-    temp.innerHTML = html;
-    const table = temp.firstChild;
-    range.insertNode(table);
-    range.setStart(table.querySelector('th, td') || table, 0);
-    range.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(range);
-  } else {
-    visualEditor.insertAdjacentHTML('beforeend', html);
-  }
-  addTableGuideBorders();
-  isDirty = true;
-  updateTitle();
-  await syncToEngine();
-});
-
-// ── Undo/Redo via Engine ──
-
-document.addEventListener('keydown', async (e) => {
-  const isMeta = e.metaKey || e.ctrlKey;
-  const key = e.key.toLowerCase();
-
-  if (isMeta && key === 'z' && !e.shiftKey) {
-    e.preventDefault();
-    try {
-      const source = await invoke('undo');
-      renderFromSource(source);
-    } catch (err) { /* nothing to undo */ }
-    return;
-  }
-
-  if (isMeta && key === 'z' && e.shiftKey) {
-    e.preventDefault();
-    try {
-      const source = await invoke('redo');
-      renderFromSource(source);
-    } catch (err) { /* nothing to redo */ }
-    return;
-  }
-
-  if (isMeta && key === 'b') { e.preventDefault(); await wrapSelection('strong'); return; }
-  if (isMeta && key === 'i') { e.preventDefault(); await wrapSelection('em'); return; }
-  if (isMeta && key === 'u') { e.preventDefault(); await wrapSelection('u'); return; }
-
-  if (isMeta && key === 'o') { e.preventDefault(); await openFile(); return; }
-  if (isMeta && key === 'n') { e.preventDefault(); await invoke('new_window').catch(err => console.error('New window failed:', err)); return; }
-  if (isMeta && key === 's' && e.shiftKey) { e.preventDefault(); await saveFileAs(); return; }
-  if (isMeta && key === 's') { e.preventDefault(); await saveFile(); return; }
-  if (isMeta && key === 'k') { e.preventDefault(); linkBtn.click(); return; }
-
-  if (isMeta && e.shiftKey && key === 'v') {
-    e.preventDefault();
-    await switchMode(editMode === 'visual' ? 'source' : 'visual');
-    return;
-  }
-
-  if (isMeta && e.shiftKey && key === 'm') {
-    e.preventDefault();
-    await switchMode(editMode === 'visual' ? 'source' : 'visual');
-    return;
-  }
-
-  // Zoom
-  if (isMeta && (e.key === '=' || e.key === '+')) {
-    e.preventDefault();
-    zoomLevel = Math.min(zoomLevel + 10, 300);
-    document.documentElement.style.zoom = zoomLevel + '%';
-    return;
-  }
-  if (isMeta && e.key === '-') {
-    e.preventDefault();
-    zoomLevel = Math.max(zoomLevel - 10, 50);
-    document.documentElement.style.zoom = zoomLevel + '%';
-    return;
-  }
-  if (isMeta && e.key === '0') {
-    e.preventDefault();
-    zoomLevel = 100;
-    document.documentElement.style.zoom = '100%';
-    return;
-  }
-});
-
-// ── Visual/Source Mode Toggle ──
-
-visualModeBtn.addEventListener('click', () => switchMode('visual'));
-sourceModeBtn.addEventListener('click', () => switchMode('source'));
-
-async function switchMode(mode) {
-  if (mode === editMode) return;
-  deselectImage();
-  try {
-    if (editMode === 'source') {
-      await invoke('set_source_content', { content: sourceTextarea.value });
-      const source = await invoke('get_current_html');
-      visualEditor.innerHTML = source;
-      visualEditor.querySelectorAll('script').forEach(s => s.remove());
-      addTableGuideBorders();
-    } else {
-      await syncToEngine();
-      const source = await invoke('get_current_html');
-      sourceTextarea.value = source;
-    }
-    editMode = mode;
-  } catch (err) {
-    console.error('Mode switch failed:', err);
-    return;
-  }
-  visualEditor.classList.toggle('hidden', mode !== 'visual');
-  sourceEditor.classList.toggle('hidden', mode !== 'source');
-  visualModeBtn.classList.toggle('active', mode === 'visual');
-  sourceModeBtn.classList.toggle('active', mode === 'source');
-}
-
-// ── Table Editing ──
-
-function addTableGuideBorders() {
-  visualEditor.querySelectorAll('table').forEach(table => {
-    table.querySelectorAll('td, th').forEach(cell => {
-      cell.style.border = '1px dashed #c8c8ce';
-    });
-  });
-}
-
-let contextMenuEl = null;
-
-visualEditor.addEventListener('contextmenu', async (e) => {
-  const td = e.target.closest('td, th');
-  if (!td) return;
-  e.preventDefault();
-  removeContextMenu();
-
-  const menu = document.createElement('div');
-  menu.id = 'context-menu';
-  menu.innerHTML = `
-    <button class="context-menu-item" data-action="row-above">Insert Row Above</button>
-    <button class="context-menu-item" data-action="row-below">Insert Row Below</button>
-    <div class="context-separator"></div>
-    <button class="context-menu-item" data-action="col-left">Insert Column Left</button>
-    <button class="context-menu-item" data-action="col-right">Insert Column Right</button>
-    <div class="context-separator"></div>
-    <button class="context-menu-item" data-action="delete-row">Delete Row</button>
-    <button class="context-menu-item" data-action="delete-col">Delete Column</button>
-    <button class="context-menu-item" data-action="delete-table">Delete Table</button>
-  `;
-  menu.style.cssText = `position:fixed;top:${e.clientY}px;left:${e.clientX}px;`;
-  document.body.appendChild(menu);
-  contextMenuEl = menu;
-
-  menu.addEventListener('click', (me) => {
-    const action = me.target.dataset.action;
-    if (action) {
-      handleTableAction(td, action);
-      removeContextMenu();
-    }
-  });
-});
-
-document.addEventListener('click', (e) => {
-  if (contextMenuEl && !contextMenuEl.contains(e.target)) removeContextMenu();
-  if (!e.target.closest('#link-popover')) removeLinkPopover();
-  if (selectedImage && !e.target.closest('#image-toolbar') && e.target !== selectedImage && !e.target.closest('.resize-handle') && (!imageToolbar || !imageToolbar.contains(e.target))) {
-    deselectImage();
-  }
-});
-
-function removeContextMenu() {
-  if (contextMenuEl) { contextMenuEl.remove(); contextMenuEl = null; }
-}
-
-async function handleTableAction(cell, action) {
-  const row = cell.closest('tr');
-  const table = cell.closest('table');
-  const colCount = row.children.length;
-  const cellTag = cell.tagName;
-
-  if (action === 'col-left' || action === 'col-right') {
-    const cellIndex = Array.from(row.children).indexOf(cell);
-    Array.from(table.rows).forEach(r => {
-      const newCell = document.createElement(cellTag);
-      r.insertBefore(newCell, r.children[action === 'col-right' ? cellIndex + 1 : cellIndex]);
-    });
-  } else if (action === 'delete-row' && table.rows.length > 1) {
-    row.remove();
-  } else if (action === 'delete-col' && row.children.length > 1) {
-    const cellIndex = Array.from(row.children).indexOf(cell);
-    Array.from(table.rows).forEach(r => {
-      if (r.children[cellIndex]) r.children[cellIndex].remove();
-    });
-  } else if (action === 'delete-table') {
-    table.remove();
-  } else if (action === 'row-above' || action === 'row-below') {
-    const newRow = document.createElement('tr');
-    for (let i = 0; i < colCount; i++) {
-      const c = document.createElement(cellTag);
-      c.textContent = '';
-      newRow.appendChild(c);
-    }
-    if (action === 'row-above') row.parentNode.insertBefore(newRow, row);
-    else row.parentNode.insertBefore(newRow, row.nextSibling);
-  }
-
-  isDirty = true;
-  updateTitle();
-  debouncedSync();
-}
-
-// ── Link Editing ──
-
-linkBtn.addEventListener('click', () => {
-  // Open the popover regardless of whether text is selected. If selection
-  // exists we'll wrap it; otherwise we'll insert a new <a> at the caret.
-  const selectedText = getActiveSelectionText();
-  showLinkPopover(selectedText);
-});
-
-function showLinkPopover(selectedText) {
-  removeLinkPopover();
-  const popover = document.createElement('div');
-  popover.id = 'link-popover';
-  popover.innerHTML = `
-    <input type="text" id="link-url" placeholder="https://..." />
-    <input type="text" id="link-text" placeholder="Link text" value="${escapeHtml(selectedText)}" />
-    <label><input type="checkbox" id="link-new-tab" /> Open in new tab</label>
-    <div class="popover-actions">
-      <button id="link-cancel">Cancel</button>
-      <button id="link-save" class="primary-btn">Save</button>
-    </div>
-  `;
-
-  const sel = window.getSelection();
-  if (sel && sel.rangeCount > 0 && sel.anchorNode && visualEditor.contains(sel.anchorNode)) {
-    const rect = sel.getRangeAt(0).getBoundingClientRect();
-    popover.style.top = `${rect.bottom + 8}px`;
-    popover.style.left = `${Math.min(rect.left, window.innerWidth - 300)}px`;
-  } else if (savedRange) {
-    const rect = savedRange.getBoundingClientRect();
-    popover.style.top = `${rect.bottom + 8}px`;
-    popover.style.left = `${Math.min(rect.left, window.innerWidth - 300)}px`;
-  }
-
-  document.body.appendChild(popover);
-  document.getElementById('link-url').focus();
-
-  document.getElementById('link-save').addEventListener('click', async () => {
-    const url = document.getElementById('link-url').value;
-    const text = document.getElementById('link-text').value || url;
-    const newTab = document.getElementById('link-new-tab').checked;
-    if (!url) return;
-
-    const targetAttr = newTab ? ' target="_blank"' : '';
-    const replacement = `<a href="${url}"${targetAttr}>${text}</a>`;
-
-    if (selectedText) {
-      // Wrap the existing selection
-      await syncToEngine();
-      const source = await invoke('get_current_html');
-      const offset = source.indexOf(selectedText);
-      if (offset >= 0) {
-        await applyFormatPatch(offset, selectedText.length, replacement);
-      }
-    } else {
-      // Insert a new link at the saved caret position
-      restoreSelection();
-      const liveSel = window.getSelection();
-      if (liveSel && liveSel.rangeCount > 0 && liveSel.anchorNode && visualEditor.contains(liveSel.anchorNode)) {
-        const range = liveSel.getRangeAt(0);
-        const temp = document.createElement('div');
-        temp.innerHTML = replacement;
-        const a = temp.firstChild;
-        range.insertNode(a);
-        range.setStartAfter(a);
-        range.collapse(true);
-        liveSel.removeAllRanges();
-        liveSel.addRange(range);
-      } else {
-        visualEditor.insertAdjacentHTML('beforeend', replacement);
-      }
-      await syncToEngine();
-    }
-
-    isDirty = true;
-    updateTitle();
-    removeLinkPopover();
-  });
-
-  document.getElementById('link-cancel').addEventListener('click', removeLinkPopover);
-}
-
-function removeLinkPopover() {
-  const el = document.getElementById('link-popover');
-  if (el) el.remove();
-}
-
-// ── Image Handling ──
-
-let selectedImage = null;
-let resizeHandles = null;
-let imageToolbar = null;
-let resizing = false;
-let resizeDir = null;
-let resizeStartX = 0;
-let resizeStartY = 0;
-let resizeStartW = 0;
-let resizeStartH = 0;
-let resizeStartAspect = 1;
-let resizePreviewFrame = null;
-
-function deselectImage() {
-  if (selectedImage) {
-    selectedImage.classList.remove('selected');
-    selectedImage.style.outline = '';
-    selectedImage.style.outlineOffset = '';
-    selectedImage = null;
-  }
-  removeResizeHandles();
-  removeImageToolbar();
-}
-
-function removeResizeHandles() {
-  if (resizeHandles) { resizeHandles.forEach(h => h.remove()); resizeHandles = null; }
-}
-
-function removeImageToolbar() {
-  if (imageToolbar) { imageToolbar.remove(); imageToolbar = null; }
-}
-
-function selectImage(img) {
-  deselectImage();
-  selectedImage = img;
-  img.classList.add('selected');
-  img.style.outline = '2px solid var(--accent-color)';
-  img.style.outlineOffset = '2px';
-  showResizeHandles(img);
-  showImageToolbar(img);
-}
-
-function showResizeHandles(img) {
-  removeResizeHandles();
-  const rect = img.getBoundingClientRect();
-  const hs = 8; // handle size
-  const directions = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
-
-  resizeHandles = directions.map(dir => {
-    const h = document.createElement('div');
-    h.className = 'resize-handle';
-    h.dataset.dir = dir;
-    h.style.cssText = `position:fixed;width:${hs}px;height:${hs}px;background:white;border:1px solid var(--accent-color);z-index:150;cursor:${dir}-resize;pointer-events:auto;`;
-    h.addEventListener('mousedown', (e) => startResize(e, dir, img));
-    document.body.appendChild(h);
-    return h;
-  });
-  updateResizeHandlePositions(img);
-}
-
-function updateResizeHandlePositions(img) {
-  if (!resizeHandles) return;
-  const rect = img.getBoundingClientRect();
-  const hs = 8;
-  const positions = {
-    'nw': [rect.left - hs/2, rect.top - hs/2],
-    'n':  [rect.left + rect.width/2 - hs/2, rect.top - hs/2],
-    'ne': [rect.right - hs/2, rect.top - hs/2],
-    'e':  [rect.right - hs/2, rect.top + rect.height/2 - hs/2],
-    'se': [rect.right - hs/2, rect.bottom - hs/2],
-    's':  [rect.left + rect.width/2 - hs/2, rect.bottom - hs/2],
-    'sw': [rect.left - hs/2, rect.bottom - hs/2],
-    'w':  [rect.left - hs/2, rect.top + rect.height/2 - hs/2],
-  };
-  resizeHandles.forEach(h => {
-    const [l, t] = positions[h.dataset.dir];
-    h.style.left = l + 'px';
-    h.style.top = t + 'px';
-  });
-}
-
-function startResize(e, dir, img) {
-  e.preventDefault();
-  e.stopPropagation();
-  resizing = true;
-  resizeDir = dir;
-  resizeStartX = e.clientX;
-  resizeStartY = e.clientY;
-  resizeStartW = img.offsetWidth;
-  resizeStartH = img.offsetHeight;
-  resizeStartAspect = resizeStartW / (resizeStartH || 1);
-
-  // Create a semi-transparent preview overlay showing target dimensions
-  resizePreviewFrame = document.createElement('div');
-  resizePreviewFrame.className = 'resize-preview';
-  resizePreviewFrame.style.cssText = `position:fixed;border:1px dashed var(--accent-color);background:rgba(0,113,227,0.08);z-index:140;pointer-events:none;left:${img.getBoundingClientRect().left}px;top:${img.getBoundingClientRect().top}px;width:${resizeStartW}px;height:${resizeStartH}px;`;
-  document.body.appendChild(resizePreviewFrame);
-
-  document.addEventListener('mousemove', onResizeMove);
-  document.addEventListener('mouseup', onResizeEnd);
-}
-
-function onResizeMove(e) {
-  if (!resizing || !selectedImage) return;
-  const dx = e.clientX - resizeStartX;
-  const dy = e.clientY - resizeStartY;
-
-  let newW = resizeStartW;
-  let newH = resizeStartH;
-
-  switch (resizeDir) {
-    case 'e':  newW = resizeStartW + dx; break;
-    case 'w':  newW = resizeStartW - dx; break;
-    case 's':  newH = resizeStartH + dy; break;
-    case 'n':  newH = resizeStartH - dy; break;
-    case 'se': newW = resizeStartW + dx; newH = newW / resizeStartAspect; break;
-    case 'sw': newW = resizeStartW - dx; newH = newW / resizeStartAspect; break;
-    case 'ne': newW = resizeStartW + dx; newH = newW / resizeStartAspect; break;
-    case 'nw': newW = resizeStartW - dx; newH = newW / resizeStartAspect; break;
-  }
-
-  newW = Math.max(20, Math.round(newW));
-  newH = Math.max(20, Math.round(newH));
-
-  selectedImage.style.width = newW + 'px';
-  selectedImage.style.height = newH + 'px';
-
-  if (resizePreviewFrame) {
-    const rect = selectedImage.getBoundingClientRect();
-    resizePreviewFrame.style.width = rect.width + 'px';
-    resizePreviewFrame.style.height = rect.height + 'px';
-    resizePreviewFrame.style.left = rect.left + 'px';
-    resizePreviewFrame.style.top = rect.top + 'px';
-  }
-
-  updateResizeHandlePositions(selectedImage);
-  updateImageToolbarPosition();
-}
-
-function onResizeEnd() {
-  resizing = false;
-  resizeDir = null;
-  document.removeEventListener('mousemove', onResizeMove);
-  document.removeEventListener('mouseup', onResizeEnd);
-  if (resizePreviewFrame) { resizePreviewFrame.remove(); resizePreviewFrame = null; }
-  if (selectedImage) {
-    isDirty = true;
-    updateTitle();
-    debouncedSync();
-    updateSizeInputs();
-  }
-}
 
 function showImageToolbar(img) {
   removeImageToolbar();
-  const rect = img.getBoundingClientRect();
 
   imageToolbar = document.createElement('div');
   imageToolbar.id = 'image-toolbar';
   imageToolbar.innerHTML = `
     <div class="image-toolbar-section">
-      <label class="image-toolbar-label">W</label>
+      <label class="image-toolbar-label">${t('image.toolbar.width')}</label>
       <input type="number" id="img-width-input" class="image-toolbar-input" min="1" value="${Math.round(img.offsetWidth)}" />
     </div>
     <div class="image-toolbar-section">
-      <label class="image-toolbar-label">H</label>
+      <label class="image-toolbar-label">${t('image.toolbar.height')}</label>
       <input type="number" id="img-height-input" class="image-toolbar-input" min="1" value="${Math.round(img.offsetHeight)}" />
     </div>
     <div class="image-toolbar-sep"></div>
-    <button class="image-toolbar-btn" id="img-link-btn" title="Wrap in Link">Link</button>
-    <button class="image-toolbar-btn" id="img-border-btn" title="Toggle Border">Border</button>
-    <button class="image-toolbar-btn" id="img-replace-btn" title="Replace Image">Replace</button>
-    <button class="image-toolbar-btn danger" id="img-remove-btn" title="Remove Image">Remove</button>
+    <button class="image-toolbar-btn" id="img-link-btn" title="${t('image.toolbar.linkTitle')}">${t('image.toolbar.link')}</button>
+    <button class="image-toolbar-btn" id="img-border-btn" title="${t('image.toolbar.borderTitle')}">${t('image.toolbar.border')}</button>
+    <button class="image-toolbar-btn" id="img-replace-btn" title="${t('image.toolbar.replaceTitle')}">${t('image.toolbar.replace')}</button>
+    <button class="image-toolbar-btn danger" id="img-remove-btn" title="${t('image.toolbar.removeTitle')}">${t('image.toolbar.remove')}</button>
   `;
   imageToolbar.style.cssText = `position:fixed;z-index:200;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:6px 8px;display:flex;align-items:center;gap:4px;`;
 
   document.body.appendChild(imageToolbar);
   updateImageToolbarPosition();
 
-  // Initialize button handlers
-  function updateImageToolbarPosition() {
-    if (!imageToolbar || !selectedImage) return;
-    const r = selectedImage.getBoundingClientRect();
-    const top = r.bottom + 6;
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - 340));
-    imageToolbar.style.top = top + 'px';
-    imageToolbar.style.left = left + 'px';
-  }
-
+  // Width/height inputs
   document.getElementById('img-width-input').addEventListener('change', () => {
     if (!selectedImage) return;
     const w = parseInt(document.getElementById('img-width-input').value) || 100;
@@ -1069,7 +603,7 @@ function showImageToolbar(img) {
     if (!selectedImage) return;
     try {
       const selected = await open({
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
+        filters: [{ name: t('image.fileFilters.name'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
         multiple: false,
       });
       if (!selected) return;
@@ -1101,7 +635,7 @@ function showImageToolbar(img) {
 
   document.getElementById('img-link-btn').addEventListener('click', async () => {
     if (!selectedImage) return;
-    const url = prompt('Enter link URL (https://...)', '');
+    const url = prompt(t('image.linkPrompt'), '');
     if (!url) return;
     const a = document.createElement('a');
     a.setAttribute('href', url);
@@ -1146,7 +680,7 @@ visualEditor.addEventListener('dblclick', async (e) => {
   e.stopPropagation();
   try {
     const selected = await open({
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
+      filters: [{ name: t('image.fileFilters.name'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] }],
       multiple: false,
     });
     if (!selected) return;
@@ -1182,7 +716,7 @@ async function renderRecentFiles() {
   const list = document.getElementById('recent-list');
   if (!list) return;
   if (recent.length === 0) {
-    list.innerHTML = '<p class="recent-label">Recently opened files will appear here</p>';
+    list.innerHTML = `<p class="recent-label">${t('emptyState.recentHeading')}</p>`;
     return;
   }
   list.innerHTML = recent.map(path => {
@@ -1230,13 +764,14 @@ if (pdfBtn) {
         await syncToEngine();
       }
       const filePath = await save({
-        filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+        filters: [{ name: t('file.filters.pdf.name'), extensions: ['pdf'] }],
         defaultPath: (currentFilePath || 'document').replace(/\.html?$/i, '') + '.pdf',
       });
       if (!filePath) return;
       await invoke('export_pdf', { path: filePath });
-      alert('PDF exported to ' + filePath);
+      showStatus(`${t('status.pdfExported')} ${filePath}`, 'success', 6000);
     } catch (err) {
+      showStatus(t('errors.pdfExportFailed'), 'error');
       console.error('PDF export failed:', err);
     }
   });
@@ -1294,7 +829,7 @@ function toggleRecentPanel() {
 
   const recent = getRecentFiles();
   if (recent.length === 0) {
-    alert('No recent files.');
+    showStatus(t('toolbar.noRecentFiles'), 'warning');
     return;
   }
 
@@ -1317,7 +852,7 @@ function toggleRecentPanel() {
         visualEditor.querySelectorAll('script').forEach(s => s.remove());
         sourceTextarea.value = html; addTableGuideBorders();
         showEditor(); updateTitle(); addRecentFile(path);
-      } catch (err) { alert('File not found: ' + path); renderRecentFiles(); }
+      } catch (err) { showStatus(t('errors.fileNotFound'), 'error'); renderRecentFiles(); }
     });
     panel.appendChild(item);
   });
@@ -1335,8 +870,8 @@ function showEditor() {
 }
 
 function updateTitle() {
-  const filename = currentFilePath ? currentFilePath.split('/').pop() : 'Untitled';
-  document.title = (isDirty ? '● ' : '') + filename + ' — PageSmith';
+  const filename = currentFilePath ? currentFilePath.split('/').pop() : t('app.untitled');
+  document.title = (isDirty ? t('app.titleDirtyPrefix') : '') + filename + t('app.titleSuffix');
 }
 
 function escapeHtml(str) {
@@ -1346,7 +881,7 @@ function escapeHtml(str) {
 }
 
 renderRecentFiles();
-console.log('PageSmith v0.5 — image resize, multi-window, undo cap');
+console.log('PageSmith v0.5 — i18n, status bar, image resize, multi-window');
 
 // Keep image handles and toolbar positioned on scroll/resize
 visualEditor.addEventListener('scroll', () => {

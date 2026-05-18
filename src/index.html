@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-i18n-lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PageSmith</title>
+  <title data-i18n="app.title">PageSmith</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet" />
@@ -14,11 +14,11 @@
     <!-- Empty state -->
     <div id="empty-state">
       <div class="empty-state-content">
-        <h1>Open an HTML file to start editing</h1>
-        <button id="open-btn" class="primary-btn">Open...</button>
+        <h1 data-i18n="emptyState.heading">Open an HTML file to start editing</h1>
+        <button id="open-btn" class="primary-btn" data-i18n="emptyState.openButton">Open...</button>
       </div>
       <div class="recent-files">
-        <p class="recent-label">Recently opened files will appear here</p>
+        <p class="recent-label" data-i18n="emptyState.recentLabel">Recently opened files will appear here</p>
         <div id="recent-list"></div>
       </div>
     </div>
@@ -27,100 +27,99 @@
     <div id="editor-view" class="hidden">
       <!-- Visual/Source toggle -->
       <div class="mode-toggle">
-        <button id="visual-mode-btn" class="mode-btn active">Visual</button>
-        <button id="source-mode-btn" class="mode-btn">Source</button>
+        <button id="visual-mode-btn" class="mode-btn active" data-i18n="mode.visual">Visual</button>
+        <button id="source-mode-btn" class="mode-btn" data-i18n="mode.source">Source</button>
       </div>
 
       <!-- Toolbar -->
       <div id="toolbar">
         <!-- File -->
-        <button id="toolbar-open-btn" class="toolbar-btn icon-btn" title="Open File (⌘O)"><span class="material-symbols-outlined">folder_open</span></button>
-        <button id="recent-btn" class="toolbar-btn icon-btn" title="Recent Files"><span class="material-symbols-outlined">history</span></button>
-        <button id="new-window-btn" class="toolbar-btn icon-btn" title="New Window (⌘N)"><span class="material-symbols-outlined">open_in_new</span></button>
+        <button id="toolbar-open-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.openFile"><span class="material-symbols-outlined">folder_open</span></button>
+        <button id="recent-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.recentFiles"><span class="material-symbols-outlined">history</span></button>
+        <button id="new-window-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.newWindow"><span class="material-symbols-outlined">open_in_new</span></button>
         <div class="toolbar-separator"></div>
 
         <!-- Paragraph format -->
         <select id="format-select" class="toolbar-item">
-          <option value="p">Paragraph</option>
-          <option value="h1">Heading 1</option>
-          <option value="h2">Heading 2</option>
-          <option value="h3">Heading 3</option>
-          <option value="h4">Heading 4</option>
-          <option value="h5">Heading 5</option>
-          <option value="h6">Heading 6</option>
-          <option value="blockquote">Blockquote</option>
-          <option value="pre">Preformatted</option>
-          <option value="article">Article</option>
-          <option value="section">Section</option>
-          <option value="nav">Nav</option>
-          <option value="header">Header</option>
-          <option value="footer">Footer</option>
-          <option value="aside">Aside</option>
-          <option value="figure">Figure</option>
-          <option value="main">Main</option>
+          <option value="p" data-i18n="toolbar.format.p">Paragraph</option>
+          <option value="h1" data-i18n="toolbar.format.h1">Heading 1</option>
+          <option value="h2" data-i18n="toolbar.format.h2">Heading 2</option>
+          <option value="h3" data-i18n="toolbar.format.h3">Heading 3</option>
+          <option value="h4" data-i18n="toolbar.format.h4">Heading 4</option>
+          <option value="h5" data-i18n="toolbar.format.h5">Heading 5</option>
+          <option value="h6" data-i18n="toolbar.format.h6">Heading 6</option>
+          <option value="blockquote" data-i18n="toolbar.format.blockquote">Blockquote</option>
+          <option value="pre" data-i18n="toolbar.format.pre">Preformatted</option>
+          <option value="article" data-i18n="toolbar.format.article">Article</option>
+          <option value="section" data-i18n="toolbar.format.section">Section</option>
+          <option value="nav" data-i18n="toolbar.format.nav">Nav</option>
+          <option value="header" data-i18n="toolbar.format.header">Header</option>
+          <option value="footer" data-i18n="toolbar.format.footer">Footer</option>
+          <option value="aside" data-i18n="toolbar.format.aside">Aside</option>
+          <option value="figure" data-i18n="toolbar.format.figure">Figure</option>
+          <option value="main" data-i18n="toolbar.format.main">Main</option>
         </select>
 
         <!-- Font -->
         <select id="font-select" class="toolbar-item">
-          <option value="">Font</option>
-          <option value="-apple-system">System</option>
-          <option value="Arial">Arial</option>
-          <option value="Helvetica">Helvetica</option>
-          <option value="Georgia">Georgia</option>
-          <option value="Times New Roman">Times New Roman</option>
-          <option value="Courier New">Courier New</option>
-          <option value="Verdana">Verdana</option>
-          <option value="Trebuchet MS">Trebuchet MS</option>
+          <option value="" data-i18n="toolbar.font.label">Font</option>
+          <option value="-apple-system" data-i18n="toolbar.font.system">System</option>
+          <option value="Arial" data-i18n="toolbar.font.arial">Arial</option>
+          <option value="Helvetica" data-i18n="toolbar.font.helvetica">Helvetica</option>
+          <option value="Georgia" data-i18n="toolbar.font.georgia">Georgia</option>
+          <option value="Times New Roman" data-i18n="toolbar.font.timesNewRoman">Times New Roman</option>
+          <option value="Courier New" data-i18n="toolbar.font.courierNew">Courier New</option>
+          <option value="Verdana" data-i18n="toolbar.font.verdana">Verdana</option>
+          <option value="Trebuchet MS" data-i18n="toolbar.font.trebuchetMS">Trebuchet MS</option>
         </select>
 
         <!-- Font size -->
         <select id="font-size-select" class="toolbar-item">
-          <option value="">Size</option>
-          <option value="1">8pt</option>
-          <option value="2">10pt</option>
-          <option value="3">12pt</option>
-          <option value="4">14pt</option>
-          <option value="5">18pt</option>
-          <option value="6">24pt</option>
-          <option value="7">36pt</option>
+          <option value="" data-i18n="toolbar.fontSize.label">Size</option>
+          <option value="1" data-i18n="toolbar.fontSize.8pt">8pt</option>
+          <option value="2" data-i18n="toolbar.fontSize.10pt">10pt</option>
+          <option value="3" data-i18n="toolbar.fontSize.12pt">12pt</option>
+          <option value="4" data-i18n="toolbar.fontSize.14pt">14pt</option>
+          <option value="5" data-i18n="toolbar.fontSize.18pt">18pt</option>
+          <option value="6" data-i18n="toolbar.fontSize.24pt">24pt</option>
+          <option value="7" data-i18n="toolbar.fontSize.36pt">36pt</option>
         </select>
 
         <div class="toolbar-separator"></div>
 
         <!-- Text formatting -->
-        <button id="bold-btn" class="toolbar-btn icon-btn" title="Bold (⌘B)"><span class="material-symbols-outlined">format_bold</span></button>
-        <button id="italic-btn" class="toolbar-btn icon-btn" title="Italic (⌘I)"><span class="material-symbols-outlined">format_italic</span></button>
-        <button id="underline-btn" class="toolbar-btn icon-btn" title="Underline (⌘U)"><span class="material-symbols-outlined">format_underlined</span></button>
-        <button id="strike-btn" class="toolbar-btn icon-btn" title="Strikethrough"><span class="material-symbols-outlined">strikethrough_s</span></button>
+        <button id="bold-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.bold"><span class="material-symbols-outlined">format_bold</span></button>
+        <button id="italic-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.italic"><span class="material-symbols-outlined">format_italic</span></button>
+        <button id="underline-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.underline"><span class="material-symbols-outlined">format_underlined</span></button>
+        <button id="strike-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.strikethrough"><span class="material-symbols-outlined">strikethrough_s</span></button>
 
         <div class="toolbar-separator"></div>
 
         <!-- Lists -->
-        <button id="ul-btn" class="toolbar-btn icon-btn" title="Bullet List"><span class="material-symbols-outlined">format_list_bulleted</span></button>
-        <button id="ol-btn" class="toolbar-btn icon-btn" title="Numbered List"><span class="material-symbols-outlined">format_list_numbered</span></button>
+        <button id="ul-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.bulletList"><span class="material-symbols-outlined">format_list_bulleted</span></button>
+        <button id="ol-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.numberedList"><span class="material-symbols-outlined">format_list_numbered</span></button>
 
         <div class="toolbar-separator"></div>
 
         <!-- Alignment -->
-        <button id="align-left-btn" class="toolbar-btn icon-btn active" title="Align Left"><span class="material-symbols-outlined">format_align_left</span></button>
-        <button id="align-center-btn" class="toolbar-btn icon-btn" title="Align Center"><span class="material-symbols-outlined">format_align_center</span></button>
-        <button id="align-right-btn" class="toolbar-btn icon-btn" title="Align Right"><span class="material-symbols-outlined">format_align_right</span></button>
+        <button id="align-left-btn" class="toolbar-btn icon-btn active" data-i18n-title="toolbar.alignLeft"><span class="material-symbols-outlined">format_align_left</span></button>
+        <button id="align-center-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.alignCenter"><span class="material-symbols-outlined">format_align_center</span></button>
+        <button id="align-right-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.alignRight"><span class="material-symbols-outlined">format_align_right</span></button>
 
         <div class="toolbar-separator"></div>
 
         <!-- Insert -->
-        <button id="link-btn" class="toolbar-btn icon-btn" title="Insert Link (⌘K)"><span class="material-symbols-outlined">link</span></button>
-        <button id="image-btn" class="toolbar-btn icon-btn" title="Insert Image"><span class="material-symbols-outlined">image</span></button>
-        <button id="table-btn" class="toolbar-btn icon-btn" title="Insert Table"><span class="material-symbols-outlined">table</span></button>
+        <button id="link-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.link"><span class="material-symbols-outlined">link</span></button>
+        <button id="image-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.image"><span class="material-symbols-outlined">image</span></button>
+        <button id="table-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.table"><span class="material-symbols-outlined">table</span></button>
         <div class="toolbar-separator"></div>
-        <button id="pdf-btn" class="toolbar-btn icon-btn" title="Export PDF"><span class="material-symbols-outlined">picture_as_pdf</span></button>
+        <button id="pdf-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.pdf"><span class="material-symbols-outlined">picture_as_pdf</span></button>
         <div class="toolbar-separator"></div>
-        <button id="theme-btn" class="toolbar-btn icon-btn" title="Toggle Theme"><span class="material-symbols-outlined">dark_mode</span></button>
+        <button id="theme-btn" class="toolbar-btn icon-btn" data-i18n-title="toolbar.theme"><span class="material-symbols-outlined">dark_mode</span></button>
       </div>
 
       <!-- Visual editing area -->
       <div id="visual-editor" class="editor-area" contenteditable="true">
-        <!-- Content rendered here -->
       </div>
 
       <!-- Source editing area (hidden by default) -->
@@ -129,6 +128,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Status bar -->
+  <div id="status-bar" class="hidden"></div>
 
   <script type="module" src="main.js"></script>
 </body>
