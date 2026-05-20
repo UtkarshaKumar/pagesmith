@@ -18,17 +18,13 @@ PageSmith is what Microsoft Word is for `.docx` — but for `.html`. Open any HT
 
 It's also designed as a refinement surface for LLM-generated HTML. When an assistant produces an `.html`, PageSmith lets you tweak it visually and gives the model surgical edit primitives (instead of asking it to regenerate the whole file).
 
-## Why it exists
+## Why I built it
 
-Every existing tool sits in one of three boxes:
+AI assistants write a lot of HTML. I use them constantly — for reports, notes, quick pages — and before sharing any of it I want to make small changes: fix a heading, reword a paragraph, move a section around. Nothing that requires knowing HTML.
 
-| Category | Examples | Problem |
-|---|---|---|
-| Site builders | Webflow, Sparkle, Blocs | Proprietary project formats — can't open a hand-written `.html` |
-| Code editors | VS Code, BBEdit, Nova | Code-first; not WYSIWYG |
-| Rich-text SDKs | TinyMCE, CKEditor, Tiptap | Components for other apps, not standalone editors |
+But there's no good app for this. VS Code wants you to edit code. Webflow won't open a file you didn't create inside it. Browser DevTools edits don't save back to disk. The last app that just let you open a `.html`, click on text, change it, and save was BlueGriffon — and it's been dead since 2024.
 
-The "open a file, edit visually, save it back" desktop app died with BlueGriffon (2024). PageSmith brings it back, native to macOS.
+So I built PageSmith. Open a file, edit visually, save. That's it.
 
 ## Features
 
