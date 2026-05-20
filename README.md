@@ -6,7 +6,6 @@
 
 [![Latest release](https://img.shields.io/github/v/release/UtkarshaKumar/pagesmith?label=release&color=blue)](https://github.com/UtkarshaKumar/pagesmith/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://github.com/UtkarshaKumar/pagesmith/releases/latest)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)](https://tauri.app)
 
 ![PageSmith — visual HTML editor for macOS](src/assets/screenshot.png)
@@ -162,8 +161,8 @@ See [Releases](https://github.com/UtkarshaKumar/pagesmith/releases) for changelo
 
 ## Contributing
 
-Issues and pull requests are welcome. Please open an issue first for any feature work so we can align on scope.
+Issues and bug reports are welcome.
 
 ## License
 
-MIT © [Utkarsh Kumar](https://github.com/UtkarshaKumar)
+The app is free to download and use. The source code is not licensed for reuse or redistribution.
