@@ -2,11 +2,12 @@
 <html lang="en" data-i18n-lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, maximum-scale=5.0" />
   <title data-i18n="app.title">PageSmith</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/themes/prism.min.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -29,6 +30,7 @@
       <div class="mode-toggle">
         <button id="visual-mode-btn" class="mode-btn active" data-i18n="mode.visual">Visual</button>
         <button id="source-mode-btn" class="mode-btn" data-i18n="mode.source">Source</button>
+        <button id="llm-mode-btn" class="mode-btn" title="LLM View (CXML format for Claude/ChatGPT)">LLM</button>
       </div>
 
       <!-- Toolbar -->
@@ -126,12 +128,22 @@
       <div id="source-editor" class="editor-area hidden">
         <textarea id="source-textarea" spellcheck="false"></textarea>
       </div>
+
+      <!-- LLM View (hidden by default) -->
+      <div id="llm-editor" class="editor-area hidden">
+        <div class="llm-view-header">
+          <p class="llm-hint" data-i18n="mode.llm.hint">Copy the text below and paste it to an LLM for analysis:</p>
+        </div>
+        <textarea id="llm-textarea" readonly spellcheck="false"></textarea>
+      </div>
     </div>
   </div>
 
   <!-- Status bar -->
   <div id="status-bar" class="hidden"></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.30.0/components/prism-markup.min.js"></script>
   <script type="module" src="main.js"></script>
 </body>
 </html>

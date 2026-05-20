@@ -13,7 +13,10 @@
   },
   "mode": {
     "visual": "Visual",
-    "source": "Source"
+    "source": "Source",
+    "llm": {
+      "hint": "Copy the text below and paste it to an LLM for analysis:"
+    }
   },
   "toolbar": {
     "openFile": "Open File (⌘O)",

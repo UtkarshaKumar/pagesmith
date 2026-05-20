@@ -45,8 +45,11 @@ const editorView = document.getElementById('editor-view');
 const visualEditor = document.getElementById('visual-editor');
 const sourceTextarea = document.getElementById('source-textarea');
 const sourceEditor = document.getElementById('source-editor');
+const llmEditor = document.getElementById('llm-editor');
+const llmTextarea = document.getElementById('llm-textarea');
 const visualModeBtn = document.getElementById('visual-mode-btn');
 const sourceModeBtn = document.getElementById('source-mode-btn');
+const llmModeBtn = document.getElementById('llm-mode-btn');
 const openBtn = document.getElementById('open-btn');
 
 const boldBtn = document.getElementById('bold-btn');
@@ -800,6 +803,74 @@ document.getElementById('toolbar').addEventListener('mousedown', (e) => {
   }
 }, true); // capture phase — run before anything else can mutate selection
 
+// ── Keyboard shortcuts ──
+
+document.addEventListener('keydown', async (e) => {
+  const isMeta = e.metaKey || e.ctrlKey;
+  const key = e.key.toLowerCase();
+
+  if (isMeta && key === 'z' && !e.shiftKey) {
+    e.preventDefault();
+    try {
+      const source = await invoke('undo');
+      renderFromSource(source);
+    } catch (err) { /* nothing to undo */ }
+    return;
+  }
+
+  if (isMeta && key === 'z' && e.shiftKey) {
+    e.preventDefault();
+    try {
+      const source = await invoke('redo');
+      renderFromSource(source);
+    } catch (err) { /* nothing to redo */ }
+    return;
+  }
+
+  if (isMeta && key === 'b') { e.preventDefault(); await wrapSelection('strong'); return; }
+  if (isMeta && key === 'i') { e.preventDefault(); await wrapSelection('em'); return; }
+  if (isMeta && key === 'u') { e.preventDefault(); await wrapSelection('u'); return; }
+
+  if (isMeta && key === 'o') { e.preventDefault(); await openFile(); return; }
+  if (isMeta && key === 'n') { e.preventDefault(); await invoke('new_window').catch(err => console.error('New window failed:', err)); return; }
+  if (isMeta && key === 's' && e.shiftKey) { e.preventDefault(); await saveFileAs(); return; }
+  if (isMeta && key === 's') { e.preventDefault(); await saveFile(); return; }
+  if (isMeta && key === 'k') { e.preventDefault(); linkBtn.click(); return; }
+
+  if (isMeta && e.shiftKey && key === 'v') {
+    e.preventDefault();
+    await switchMode(editMode === 'visual' ? 'source' : 'visual');
+    return;
+  }
+
+  if (isMeta && e.shiftKey && key === 'm') {
+    e.preventDefault();
+    const next = editMode === 'visual' ? 'source' : editMode === 'source' ? 'llm' : 'visual';
+    await switchMode(next);
+    return;
+  }
+
+  // Zoom
+  if (isMeta && (e.key === '=' || e.key === '+')) {
+    e.preventDefault();
+    zoomLevel = Math.min(zoomLevel + 10, 300);
+    document.documentElement.style.zoom = zoomLevel + '%';
+    return;
+  }
+  if (isMeta && e.key === '-') {
+    e.preventDefault();
+    zoomLevel = Math.max(zoomLevel - 10, 50);
+    document.documentElement.style.zoom = zoomLevel + '%';
+    return;
+  }
+  if (isMeta && e.key === '0') {
+    e.preventDefault();
+    zoomLevel = 100;
+    document.documentElement.style.zoom = '100%';
+    return;
+  }
+});
+
 openBtn.addEventListener('click', openFile);
 
 // Toolbar Open button (visible when a file is open)
@@ -881,7 +952,90 @@ function escapeHtml(str) {
 }
 
 renderRecentFiles();
-console.log('PageSmith v0.5 — i18n, status bar, image resize, multi-window');
+console.log('PageSmith v0.5 — i18n, status bar, image resize, multi-window, LLM view');
+
+// ── Source textarea sync ──
+
+let sourceDirty = false;
+let sourceSyncTimer = null;
+
+sourceTextarea.addEventListener('input', () => {
+  sourceDirty = true;
+  if (sourceSyncTimer) clearTimeout(sourceSyncTimer);
+  sourceSyncTimer = setTimeout(async () => {
+    if (!sourceDirty) return;
+    try {
+      await invoke('set_source_content', { content: sourceTextarea.value });
+      sourceDirty = false;
+    } catch (err) { console.error('Source sync failed:', err); }
+  }, 500);
+});
+
+// ── Binary image detection ──
+
+const BINARY_IMAGE_EXTS = new Set(['.pdf', '.zip', '.tar', '.gz', '.exe', '.bin', '.dmg', '.iso', '.rar', '.7z', '.mp3', '.mp4', '.mov', '.avi']);
+
+visualEditor.addEventListener('error', (e) => {
+  const img = e.target;
+  if (img.tagName !== 'IMG') return;
+  const src = img.getAttribute('src') || '';
+  const ext = src.slice(src.lastIndexOf('.')).toLowerCase();
+  if (BINARY_IMAGE_EXTS.has(ext)) {
+    img.outerHTML = `<span style="display:inline-block;padding:6px 10px;background:var(--bg-secondary);color:var(--text-secondary);border:1px dashed var(--border-color);border-radius:4px;font-size:12px;font-family:var(--font-mono)">[Binary: ${src}]</span>`;
+  }
+}, true);
+
+// ── Visual / Source / LLM Mode Toggle ──
+
+visualModeBtn.addEventListener('click', () => switchMode('visual'));
+sourceModeBtn.addEventListener('click', () => switchMode('source'));
+if (llmModeBtn) llmModeBtn.addEventListener('click', () => switchMode('llm'));
+
+async function switchMode(mode) {
+  if (mode === editMode) return;
+  deselectImage();
+  try {
+    if (editMode === 'source') {
+      await invoke('set_source_content', { content: sourceTextarea.value });
+    } else if (editMode === 'visual') {
+      await syncToEngine();
+    }
+    const source = await invoke('get_current_html');
+
+    if (mode === 'visual') {
+      visualEditor.innerHTML = source;
+      visualEditor.querySelectorAll('script').forEach(s => s.remove());
+      addTableGuideBorders();
+    } else if (mode === 'source') {
+      sourceTextarea.value = source;
+    } else if (mode === 'llm') {
+      const filename = currentFilePath ? currentFilePath.split('/').pop() : t('app.untitled');
+      const cxml = [
+        '<documents>',
+        '  <document index="1">',
+        `    <source>${filename}</source>`,
+        '    <document_content>',
+        source,
+        '    </document_content>',
+        '  </document>',
+        '</documents>'
+      ].join('\n');
+      llmTextarea.value = cxml;
+      setTimeout(() => { llmTextarea.focus(); llmTextarea.select(); }, 50);
+    }
+    editMode = mode;
+  } catch (err) {
+    showStatus(t('errors.modeSwitchFailed'), 'error');
+    console.error('Mode switch failed:', err);
+    return;
+  }
+  visualEditor.classList.toggle('hidden', mode !== 'visual');
+  sourceEditor.classList.toggle('hidden', mode !== 'source');
+  llmEditor.classList.toggle('hidden', mode !== 'llm');
+  visualModeBtn.classList.toggle('active', mode === 'visual');
+  sourceModeBtn.classList.toggle('active', mode === 'source');
+  if (llmModeBtn) llmModeBtn.classList.toggle('active', mode === 'llm');
+}
 
 // Keep image handles and toolbar positioned on scroll/resize
 visualEditor.addEventListener('scroll', () => {

@@ -196,7 +196,6 @@ pub fn set_source_content(state: State<AppState>, window: Window, content: Strin
     model.raw = content.into_bytes();
     model.is_dirty = true;
     model.source_map = parser::parse_html(&model.raw);
-    ws.undo_stack.clear();
     Ok(())
 }
 
