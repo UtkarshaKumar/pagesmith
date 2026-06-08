@@ -162,3 +162,10 @@ Issues and bug reports are welcome.
 ## License
 
 The app is free to download and use. The source code is not licensed for reuse or redistribution.
+
+
+---
+
+> **Attribution Notice**
+> Cloning, copying, or reusing this code or design without credit is a copyright violation. If you use any part of this work, you must attribute the original author and link back to this repository.
+> © Utkarsha Kumar. All rights reserved.
